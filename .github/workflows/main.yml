@@ -1,0 +1,97 @@
+name: Android Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04  # استخدم Ubuntu 22.04 للتأكد من الاستقرار مع Buildozer
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # تثبيت الاعتماديات مع تقليل السجلات
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq  # تحديث قائمة الحزم مع تقليل السجلات
+          sudo apt-get install -y -qq \
+            build-essential \
+            git \
+            ffmpeg \
+            libsdl2-dev \
+            libsdl2-image-dev \
+            libsdl2-mixer-dev \
+            libsdl2-ttf-dev \
+            libportmidi-dev \
+            libswscale-dev \
+            libavformat-dev \
+            libavcodec-dev \
+            libunwind-dev \
+            zlib1g-dev
+          sudo apt-get install -y -qq \
+            libsqlite3-dev \
+            sqlite3 \
+            bzip2 \
+            libbz2-dev \
+            zlib1g-dev \
+            openssl \
+            libgdbm-dev \
+            libgdbm-compat-dev \
+            liblzma-dev \
+            libreadline-dev \
+            uuid-dev \
+            libgstreamer1.0 \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good
+          sudo apt-get install -y -qq \
+            zip \
+            unzip \
+            autoconf \
+            libtool \
+            pkg-config \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libtinfo6 \
+            cmake \
+            libffi-dev \
+            libssl-dev \
+            automake
+
+      # إعداد Java 17 المطلوب لـ Gradle
+      - name: Setup Java 17 required by Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'  # أو يمكنك استخدام 'zulu', 'liberica', إلخ
+          java-version: '17'
+
+      # إعداد Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'  # يمكنك تعديل إصدار Python حسب حاجتك
+
+      # تثبيت الاعتماديات الخاصة بـ pip
+      - name: Install pip dependencies
+        run: |
+          pip install --upgrade pip
+          pip install buildozer cython==0.29.33
+
+      # بناء باستخدام Buildozer مع تقليل التفاصيل
+      - name: Build with Buildozer
+        id: buildozer
+        run: |
+          yes | buildozer android debug --no-clean --quiet  # استخدم --quiet لتقليل السجلات
+
+      # رفع الحزم الناتجة
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: package
+          path: |
+            bin/*.apk
+            bin/*.aab
