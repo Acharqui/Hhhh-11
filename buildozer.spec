@@ -23,8 +23,7 @@ version = 0.5
 android.version_code = 5
 
 # (list) Application requirements
-requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests,certifi,urllib3,chardet,idna,sqlite3
-
+requirements = python3,kivy
 # (str) Presplash of the application (اختياري)
 #presplash.filename = data/presplash.png
 
