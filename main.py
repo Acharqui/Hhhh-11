@@ -40,118 +40,89 @@ if platform not in ("android", "ios"):
 
 class SQLiteStorage:
     def __init__(self, db_name='football_data.db'):
-        """تهيئة التخزين مع قاعدة بيانات خارجية على أندرويد"""
         self.db_path = self._get_external_db_path(db_name)
         self._ensure_db_directory()
         self.init_database()
-        print(f"📁 قاعدة البيانات في: {self.db_path}")
-    
+        print(f"📁 SQLite DB Path: {self.db_path}")
+
     def _get_external_db_path(self, db_name):
-        """الحصول على مسار قاعدة البيانات في التخزين الخارجي على أندرويد"""
+        """
+        مسار تخزين خارجي آمن ومسموح به في Android 11+
+        ويمكن فتحه وتعديله بواسطة SQLite Manager
+        """
         if platform == 'android':
             try:
-                # استيراد مكتبات أندرويد
-                from android.storage import primary_external_storage_path
-                from android.permissions import request_permissions, Permission
-                
-                # طلب إذن الكتابة في التخزين الخارجي (لأندرويد 10 وما دون)
-                try:
-                    permissions = [Permission.WRITE_EXTERNAL_STORAGE,
-                                 Permission.READ_EXTERNAL_STORAGE]
-                    request_permissions(permissions)
-                    time.sleep(1)  # الانتظار قليلاً لمنح الإذن
-                except Exception as e:
-                    print(f"⚠️ ملاحظة على الإذن: {e}")
-                    # تجاهل الخطأ إذا كان الإذن ممنوحًا بالفعل
-                
-                # الحصول على المسار الرئيسي للتخزين الخارجي
-                try:
-                    ext_storage = primary_external_storage_path()
-                    print(f"📁 التخزين الخارجي: {ext_storage}")
-                    
-                    # إنشاء مجلد خاص بالتطبيق
-                    app_folder = os.path.join(ext_storage, "FootballAppData")
-                    os.makedirs(app_folder, exist_ok=True)
-                    
-                    # المسار النهائي للقاعدة
-                    return os.path.join(app_folder, db_name)
-                    
-                except Exception as e:
-                    print(f"⚠️ خطأ في الوصول للتخزين الخارجي: {e}")
-                    # استخدام المسار الافتراضي كخيار احتياطي
-                    return db_name
-                    
+                # ⚠️ عدل اسم الحزمة هنا
+                PACKAGE_NAME = "achaib110"
+
+                base_path = f"/storage/emulated/0/Android/data/{PACKAGE_NAME}/files"
+                app_folder = os.path.join(base_path, "FootballAppData")
+
+                os.makedirs(app_folder, exist_ok=True)
+
+                return os.path.join(app_folder, db_name)
+
             except Exception as e:
-                print(f"⚠️ خطأ في تهيئة التخزين الخارجي: {e}")
+                print(f"❌ Storage error: {e}")
                 return db_name
         else:
-            # لنظام التشغيل الآخر (ويندوز، لينكس، ماك)
-            import tempfile
-            app_folder = os.path.join(tempfile.gettempdir(), "FootballAppData")
-            os.makedirs(app_folder, exist_ok=True)
-            return os.path.join(app_folder, db_name)
-    
+            return db_name
+
     def _ensure_db_directory(self):
-        """تأكد من وجود مجلد قاعدة البيانات"""
         try:
             db_dir = os.path.dirname(self.db_path)
             if db_dir and not os.path.exists(db_dir):
                 os.makedirs(db_dir, exist_ok=True)
-                print(f"📁 تم إنشاء مجلد قاعدة البيانات: {db_dir}")
         except Exception as e:
-            print(f"⚠️ خطأ في إنشاء مجلد قاعدة البيانات: {e}")
-    
+            print(f"❌ Directory error: {e}")
+
+    def get_connection(self):
+        return sqlite3.connect(self.db_path)
+
     def init_database(self):
-        """تهيئة جداول قاعدة البيانات"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            
-            # جدول المباريات المفضلة
-            cursor.execute('''
+
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS favorites (
                     id INTEGER PRIMARY KEY,
                     match_data TEXT
                 )
-            ''')
-            
-            # جدول المباريات المخفية
-            cursor.execute('''
+            """)
+
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS hidden_matches (
                     id INTEGER PRIMARY KEY,
                     match_data TEXT
                 )
-            ''')
-            
-            # جدول الدوريات المفضلة
-            cursor.execute('''
+            """)
+
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS favorite_leagues (
                     id INTEGER PRIMARY KEY,
                     league_name TEXT,
                     league_id INTEGER UNIQUE
                 )
-            ''')
-            
-            # جدول الدوريات المحددة
-            cursor.execute('''
+            """)
+
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS selected_leagues (
                     id INTEGER PRIMARY KEY,
                     league_name TEXT,
                     league_id INTEGER UNIQUE
                 )
-            ''')
-            
-            # جدول إعدادات الفلتر
-            cursor.execute('''
+            """)
+
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS filter_settings (
                     id INTEGER PRIMARY KEY,
                     setting_name TEXT UNIQUE,
                     setting_value TEXT
                 )
-            ''')
-            
-            # جدول جديد: كاش API الرئيسي
-            cursor.execute('''
+            """)
+
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS api_cache (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     endpoint TEXT NOT NULL,
@@ -163,38 +134,34 @@ class SQLiteStorage:
                     access_count INTEGER DEFAULT 0,
                     UNIQUE(endpoint, params_hash)
                 )
-            ''')
-            
-            # فهارس لتحسين الأداء
-            cursor.execute('''
+            """)
+
+            cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_api_cache_lookup
                 ON api_cache(endpoint, params_hash)
-            ''')
-            
-            cursor.execute('''
+            """)
+
+            cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_api_cache_expires
                 ON api_cache(expires_at)
-            ''')
-            
-            # جدول جديد: إحصائيات استخدام الكاش
-            cursor.execute('''
+            """)
+
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS cache_stats (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date TEXT NOT NULL,
+                    date TEXT UNIQUE,
                     cache_hits INTEGER DEFAULT 0,
                     cache_misses INTEGER DEFAULT 0,
-                    api_calls INTEGER DEFAULT 0,
-                    UNIQUE(date)
+                    api_calls INTEGER DEFAULT 0
                 )
-            ''')
-            
+            """)
+
             conn.commit()
             conn.close()
-            
-            print("✅ تم تهيئة قاعدة البيانات بنجاح")
-            
+            print("✅ Database initialized")
+
         except Exception as e:
-            print(f"❌ خطأ في تهيئة قاعدة البيانات: {e}")
+            print(f"❌ DB init error: {e}")
     
     def get_connection(self):
         return sqlite3.connect(self.db_path)
