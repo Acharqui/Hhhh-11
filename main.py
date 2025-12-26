@@ -3600,6 +3600,5 @@ class ProfessionalFootballApp(MDApp):
         except Exception as e:
             self.show_snackbar(f"❌ Refresh error: {str(e)}")
 
-
 if __name__ == '__main__':
     ProfessionalFootballApp().run()
