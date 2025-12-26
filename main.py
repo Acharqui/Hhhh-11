@@ -38,428 +38,315 @@ if platform not in ("android", "ios"):
     Window.size = (400, 800)
 
 
-class DatabaseManager:
-    """مدير قاعدة البيانات باستخدام SQLite"""
-    
-    def __init__(self, db_path):
-        self.db_path = db_path
+class SQLiteStorage:
+    def __init__(self, db_name='football_data.db'):
+        """تهيئة التخزين مع قاعدة بيانات خارجية على أندرويد"""
+        self.db_path = self._get_external_db_path(db_name)
+        self._ensure_db_directory()
         self.init_database()
+        print(f"📁 قاعدة البيانات في: {self.db_path}")
+    
+    def _get_external_db_path(self, db_name):
+        """الحصول على مسار قاعدة البيانات في التخزين الخارجي على أندرويد"""
+        if platform == 'android':
+            try:
+                # استيراد مكتبات أندرويد
+                from android.storage import primary_external_storage_path
+                from android.permissions import request_permissions, Permission
+                
+                # طلب إذن الكتابة في التخزين الخارجي (لأندرويد 10 وما دون)
+                try:
+                    permissions = [Permission.WRITE_EXTERNAL_STORAGE,
+                                 Permission.READ_EXTERNAL_STORAGE]
+                    request_permissions(permissions)
+                    time.sleep(1)  # الانتظار قليلاً لمنح الإذن
+                except Exception as e:
+                    print(f"⚠️ ملاحظة على الإذن: {e}")
+                    # تجاهل الخطأ إذا كان الإذن ممنوحًا بالفعل
+                
+                # الحصول على المسار الرئيسي للتخزين الخارجي
+                try:
+                    ext_storage = primary_external_storage_path()
+                    print(f"📁 التخزين الخارجي: {ext_storage}")
+                    
+                    # إنشاء مجلد خاص بالتطبيق
+                    app_folder = os.path.join(ext_storage, "FootballAppData")
+                    os.makedirs(app_folder, exist_ok=True)
+                    
+                    # المسار النهائي للقاعدة
+                    return os.path.join(app_folder, db_name)
+                    
+                except Exception as e:
+                    print(f"⚠️ خطأ في الوصول للتخزين الخارجي: {e}")
+                    # استخدام المسار الافتراضي كخيار احتياطي
+                    return db_name
+                    
+            except Exception as e:
+                print(f"⚠️ خطأ في تهيئة التخزين الخارجي: {e}")
+                return db_name
+        else:
+            # لنظام التشغيل الآخر (ويندوز، لينكس، ماك)
+            import tempfile
+            app_folder = os.path.join(tempfile.gettempdir(), "FootballAppData")
+            os.makedirs(app_folder, exist_ok=True)
+            return os.path.join(app_folder, db_name)
+    
+    def _ensure_db_directory(self):
+        """تأكد من وجود مجلد قاعدة البيانات"""
+        try:
+            db_dir = os.path.dirname(self.db_path)
+            if db_dir and not os.path.exists(db_dir):
+                os.makedirs(db_dir, exist_ok=True)
+                print(f"📁 تم إنشاء مجلد قاعدة البيانات: {db_dir}")
+        except Exception as e:
+            print(f"⚠️ خطأ في إنشاء مجلد قاعدة البيانات: {e}")
     
     def init_database(self):
-        """تهيئة قاعدة البيانات وإنشاء الجداول"""
+        """تهيئة جداول قاعدة البيانات"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # جدول المباريات المفضلة
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS favorites (
+                    id INTEGER PRIMARY KEY,
+                    match_data TEXT
+                )
+            ''')
+            
+            # جدول المباريات المخفية
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS hidden_matches (
+                    id INTEGER PRIMARY KEY,
+                    match_data TEXT
+                )
+            ''')
+            
+            # جدول الدوريات المفضلة
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS favorite_leagues (
+                    id INTEGER PRIMARY KEY,
+                    league_name TEXT,
+                    league_id INTEGER UNIQUE
+                )
+            ''')
+            
+            # جدول الدوريات المحددة
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS selected_leagues (
+                    id INTEGER PRIMARY KEY,
+                    league_name TEXT,
+                    league_id INTEGER UNIQUE
+                )
+            ''')
+            
+            # جدول إعدادات الفلتر
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS filter_settings (
+                    id INTEGER PRIMARY KEY,
+                    setting_name TEXT UNIQUE,
+                    setting_value TEXT
+                )
+            ''')
+            
+            # جدول جديد: كاش API الرئيسي
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS api_cache (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    endpoint TEXT NOT NULL,
+                    params_hash TEXT NOT NULL,
+                    data_json TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    expires_at DATETIME,
+                    access_count INTEGER DEFAULT 0,
+                    UNIQUE(endpoint, params_hash)
+                )
+            ''')
+            
+            # فهارس لتحسين الأداء
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_api_cache_lookup
+                ON api_cache(endpoint, params_hash)
+            ''')
+            
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_api_cache_expires
+                ON api_cache(expires_at)
+            ''')
+            
+            # جدول جديد: إحصائيات استخدام الكاش
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS cache_stats (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,
+                    cache_hits INTEGER DEFAULT 0,
+                    cache_misses INTEGER DEFAULT 0,
+                    api_calls INTEGER DEFAULT 0,
+                    UNIQUE(date)
+                )
+            ''')
+            
+            conn.commit()
+            conn.close()
+            
+            print("✅ تم تهيئة قاعدة البيانات بنجاح")
+            
+        except Exception as e:
+            print(f"❌ خطأ في تهيئة قاعدة البيانات: {e}")
+    
+    def get_connection(self):
+        return sqlite3.connect(self.db_path)
+    
+    # دوال المباريات المفضلة
+    def load_favorites(self):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT match_data FROM favorites')
+        rows = cursor.fetchall()
+        conn.close()
+        
+        favorites = []
+        for row in rows:
+            try:
+                match_data = json.loads(row[0])
+                favorites.append(match_data)
+            except:
+                pass
+        return favorites
+    
+    def save_favorites(self, favorites):
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # جدول المباريات المخفية
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS hidden_matches (
-                id TEXT PRIMARY KEY,
-                data TEXT NOT NULL,
-                hidden_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+        # مسح القديم وإضافة الجديد
+        cursor.execute('DELETE FROM favorites')
         
-        # جدول الدوريات المفضلة
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS favorite_leagues (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                data TEXT,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # جدول الدوريات المختارة
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS selected_leagues (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                data TEXT,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # جدول المباريات المفضلة
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS favorite_matches (
-                id TEXT PRIMARY KEY,
-                data TEXT NOT NULL,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+        for match in favorites:
+            try:
+                match_data = json.dumps(match)
+                cursor.execute('INSERT INTO favorites (match_data) VALUES (?)', (match_data,))
+            except:
+                pass
         
         conn.commit()
         conn.close()
     
-    def get_connection(self):
-        """الحصول على اتصال بقاعدة البيانات"""
-        return sqlite3.connect(self.db_path)
+    # دوال المباريات المخفية
+    def load_hidden_matches(self):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT match_data FROM hidden_matches')
+        rows = cursor.fetchall()
+        conn.close()
+        
+        hidden_matches = []
+        for row in rows:
+            try:
+                match_data = json.loads(row[0])
+                hidden_matches.append(match_data)
+            except:
+                pass
+        return hidden_matches
     
-    # ===== وظائف المباريات المخفية =====
-    def add_hidden_match(self, match_data):
-        """إضافة مباراة مخفية"""
+    def save_hidden_matches(self, hidden_matches):
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        try:
-            match_id = str(match_data.get('id'))
-            data_json = json.dumps(match_data)
-            
-            cursor.execute(
-                'INSERT OR REPLACE INTO hidden_matches (id, data) VALUES (?, ?)',
-                (match_id, data_json)
-            )
-            
-            conn.commit()
-            return True
-        except Exception as e:
-            print(f"Error adding hidden match: {e}")
-            return False
-        finally:
-            conn.close()
+        cursor.execute('DELETE FROM hidden_matches')
+        
+        for match in hidden_matches:
+            try:
+                match_data = json.dumps(match)
+                cursor.execute('INSERT INTO hidden_matches (match_data) VALUES (?)', (match_data,))
+            except:
+                pass
+        
+        conn.commit()
+        conn.close()
     
-    def remove_hidden_match(self, match_id):
-        """إزالة مباراة مخفية"""
+    # دوال الدوريات المفضلة
+    def load_favorite_leagues(self):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT league_name, league_id FROM favorite_leagues')
+        rows = cursor.fetchall()
+        conn.close()
+        
+        favorite_leagues = []
+        for row in rows:
+            favorite_leagues.append({'name': row[0], 'id': row[1]})
+        return favorite_leagues
+    
+    def save_favorite_leagues(self, favorite_leagues):
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        try:
-            cursor.execute('DELETE FROM hidden_matches WHERE id = ?', (str(match_id),))
-            conn.commit()
-            return cursor.rowcount > 0
-        except Exception as e:
-            print(f"Error removing hidden match: {e}")
-            return False
-        finally:
-            conn.close()
+        cursor.execute('DELETE FROM favorite_leagues')
+        
+        for league in favorite_leagues:
+            try:
+                cursor.execute('INSERT INTO favorite_leagues (league_name, league_id) VALUES (?, ?)',
+                             (league['name'], league['id']))
+            except:
+                pass
+        
+        conn.commit()
+        conn.close()
     
-    def get_hidden_matches(self):
-        """جلب جميع المباريات المخفية"""
+    # دوال الدوريات المحددة
+    def load_league_selection(self):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT league_name, league_id FROM selected_leagues')
+        rows = cursor.fetchall()
+        conn.close()
+        
+        selected_leagues = []
+        for row in rows:
+            selected_leagues.append({'name': row[0], 'id': row[1]})
+        return selected_leagues
+    
+    def save_league_selection(self, selected_leagues):
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        try:
-            cursor.execute('SELECT data FROM hidden_matches ORDER BY hidden_at DESC')
-            rows = cursor.fetchall()
-            
-            matches = []
-            for row in rows:
-                try:
-                    match_data = json.loads(row[0])
-                    matches.append(match_data)
-                except json.JSONDecodeError:
-                    continue
-            
-            return matches
-        except Exception as e:
-            print(f"Error getting hidden matches: {e}")
-            return []
-        finally:
-            conn.close()
+        cursor.execute('DELETE FROM selected_leagues')
+        
+        for league in selected_leagues:
+            try:
+                cursor.execute('INSERT INTO selected_leagues (league_name, league_id) VALUES (?, ?)',
+                             (league['name'], league['id']))
+            except:
+                pass
+        
+        conn.commit()
+        conn.close()
     
-    def is_match_hidden(self, match_id):
-        """التحقق إذا كانت المباراة مخفية"""
+    # دوال إعدادات الفلتر
+    def load_filter_state(self, setting_name):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT setting_value FROM filter_settings WHERE setting_name = ?', (setting_name,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return row[0] == 'True'
+        return False
+    
+    def save_filter_state(self, setting_name, state):
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        try:
-            cursor.execute('SELECT 1 FROM hidden_matches WHERE id = ?', (str(match_id),))
-            return cursor.fetchone() is not None
-        finally:
-            conn.close()
-    
-    def clear_hidden_matches(self):
-        """مسح جميع المباريات المخفية"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO filter_settings (setting_name, setting_value)
+            VALUES (?, ?)
+        ''', (setting_name, str(state)))
         
-        try:
-            cursor.execute('DELETE FROM hidden_matches')
-            conn.commit()
-            return True
-        except Exception as e:
-            print(f"Error clearing hidden matches: {e}")
-            return False
-        finally:
-            conn.close()
-    
-    def get_hidden_match_ids(self):
-        """جلب فقط IDs للمباريات المخفية (أكثر كفاءة)"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('SELECT id FROM hidden_matches')
-            rows = cursor.fetchall()
-            return {str(row[0]) for row in rows}
-        except Exception as e:
-            print(f"Error getting hidden match IDs: {e}")
-            return set()
-        finally:
-            conn.close()
-    
-    # ===== وظائف الدوريات المفضلة =====
-    def add_favorite_league(self, league_id, league_name, league_data=None):
-        """إضافة دوري مفضل"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            data_json = json.dumps(league_data) if league_data else json.dumps({'name': league_name})
-            
-            cursor.execute(
-                'INSERT OR REPLACE INTO favorite_leagues (id, name, data) VALUES (?, ?, ?)',
-                (str(league_id), league_name, data_json)
-            )
-            
-            conn.commit()
-            return True
-        except Exception as e:
-            print(f"Error adding favorite league: {e}")
-            return False
-        finally:
-            conn.close()
-    
-    def remove_favorite_league(self, league_id):
-        """إزالة دوري مفضل"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('DELETE FROM favorite_leagues WHERE id = ?', (str(league_id),))
-            conn.commit()
-            return cursor.rowcount > 0
-        except Exception as e:
-            print(f"Error removing favorite league: {e}")
-            return False
-        finally:
-            conn.close()
-    
-    def get_favorite_leagues(self):
-        """جلب جميع الدوريات المفضلة"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('SELECT id, name, data FROM favorite_leagues ORDER BY added_at DESC')
-            rows = cursor.fetchall()
-            
-            leagues = []
-            for row in rows:
-                league_id, league_name, data_json = row
-                try:
-                    league_data = json.loads(data_json) if data_json else {}
-                    leagues.append({
-                        'id': league_id,
-                        'name': league_name,
-                        **league_data
-                    })
-                except json.JSONDecodeError:
-                    leagues.append({
-                        'id': league_id,
-                        'name': league_name
-                    })
-            
-            return leagues
-        except Exception as e:
-            print(f"Error getting favorite leagues: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    def is_league_favorite(self, league_id):
-        """التحقق إذا كان الدوري مفضلاً"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('SELECT 1 FROM favorite_leagues WHERE id = ?', (str(league_id),))
-            return cursor.fetchone() is not None
-        finally:
-            conn.close()
-    
-    # ===== وظائف الدوريات المختارة =====
-    def add_selected_league(self, league_id, league_name, league_data=None):
-        """إضافة دوري مختار"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            data_json = json.dumps(league_data) if league_data else json.dumps({'name': league_name})
-            
-            cursor.execute(
-                'INSERT OR REPLACE INTO selected_leagues (id, name, data) VALUES (?, ?, ?)',
-                (str(league_id), league_name, data_json)
-            )
-            
-            conn.commit()
-            return True
-        except Exception as e:
-            print(f"Error adding selected league: {e}")
-            return False
-        finally:
-            conn.close()
-    
-    def remove_selected_league(self, league_id):
-        """إزالة دوري مختار"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('DELETE FROM selected_leagues WHERE id = ?', (str(league_id),))
-            conn.commit()
-            return cursor.rowcount > 0
-        except Exception as e:
-            print(f"Error removing selected league: {e}")
-            return False
-        finally:
-            conn.close()
-    
-    def get_selected_leagues(self):
-        """جلب جميع الدوريات المختارة"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('SELECT id, name, data FROM selected_leagues ORDER BY added_at DESC')
-            rows = cursor.fetchall()
-            
-            leagues = []
-            for row in rows:
-                league_id, league_name, data_json = row
-                try:
-                    league_data = json.loads(data_json) if data_json else {}
-                    leagues.append({
-                        'id': league_id,
-                        'name': league_name,
-                        **league_data
-                    })
-                except json.JSONDecodeError:
-                    leagues.append({
-                        'id': league_id,
-                        'name': league_name
-                    })
-            
-            return leagues
-        except Exception as e:
-            print(f"Error getting selected leagues: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    def is_league_selected(self, league_id):
-        """التحقق إذا كان الدوري مختاراً"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('SELECT 1 FROM selected_leagues WHERE id = ?', (str(league_id),))
-            return cursor.fetchone() is not None
-        finally:
-            conn.close()
-    
-    def get_selected_league_ids(self):
-        """جلب IDs فقط للدوريات المختارة"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('SELECT id FROM selected_leagues')
-            rows = cursor.fetchall()
-            return {str(row[0]) for row in rows}
-        except Exception as e:
-            print(f"Error getting selected league IDs: {e}")
-            return set()
-        finally:
-            conn.close()
-    
-    # ===== وظائف المباريات المفضلة =====
-    def add_favorite_match(self, match_data):
-        """إضافة مباراة مفضلة"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            match_id = str(match_data.get('id'))
-            data_json = json.dumps(match_data)
-            
-            cursor.execute(
-                'INSERT OR REPLACE INTO favorite_matches (id, data) VALUES (?, ?)',
-                (match_id, data_json)
-            )
-            
-            conn.commit()
-            return True
-        except Exception as e:
-            print(f"Error adding favorite match: {e}")
-            return False
-        finally:
-            conn.close()
-    
-    def remove_favorite_match(self, match_id):
-        """إزالة مباراة مفضلة"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('DELETE FROM favorite_matches WHERE id = ?', (str(match_id),))
-            conn.commit()
-            return cursor.rowcount > 0
-        except Exception as e:
-            print(f"Error removing favorite match: {e}")
-            return False
-        finally:
-            conn.close()
-    
-    def get_favorite_matches(self):
-        """جلب جميع المباريات المفضلة"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('SELECT data FROM favorite_matches ORDER BY added_at DESC')
-            rows = cursor.fetchall()
-            
-            matches = []
-            for row in rows:
-                try:
-                    match_data = json.loads(row[0])
-                    matches.append(match_data)
-                except json.JSONDecodeError:
-                    continue
-            
-            return matches
-        except Exception as e:
-            print(f"Error getting favorite matches: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    def is_match_favorite(self, match_id):
-        """التحقق إذا كانت المباراة مفضلة"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('SELECT 1 FROM favorite_matches WHERE id = ?', (str(match_id),))
-            return cursor.fetchone() is not None
-        finally:
-            conn.close()
-    
-    def get_favorite_match_ids(self):
-        """جلب IDs فقط للمباريات المفضلة"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('SELECT id FROM favorite_matches')
-            rows = cursor.fetchall()
-            return {str(row[0]) for row in rows}
-        except Exception as e:
-            print(f"Error getting favorite match IDs: {e}")
-            return set()
-        finally:
-            conn.close()
+        conn.commit()
+        conn.close()
 
 
 class CalendarHeader(MDBoxLayout):
@@ -566,6 +453,7 @@ class StatsPopup(MDFloatLayout):
                 copied_text = f"{team_rank}{opponent_rank}"
                 message_type = "ترتيب الموسم الماضي"
 
+            # نسخ إلى الحافظة
             Clipboard.copy(copied_text)
             MDApp.get_running_app().show_snackbar(
                 f"✅ تم نسخ {message_type} لـ {team_name}: {copied_text}", 
@@ -738,16 +626,30 @@ class OptimizedCompactMatchItem(MDCard):
         app = MDApp.get_running_app()
         match_id = self.match_data.get('id')
         
-        # التحقق المباشر من قاعدة البيانات
-        if not app.db.is_match_hidden(match_id):
-            app.add_hidden_match(self.match_data)
-            app.show_snackbar(f"Match hidden: {self.home_team} vs {self.away_team}")
-        else:
-            app.show_snackbar(f"Match already hidden: {self.home_team} vs {self.away_team}")
+        # تحقق إذا كانت المباراة في القائمة المخفية
+        is_in_hidden_list = app.is_hidden(match_id)
         
-        parent = self.parent
-        if parent:
-            parent.remove_widget(self)
+        if not is_in_hidden_list:
+            # إخفاء المباراة: إضافتها إلى القائمة المخفية
+            app.add_hidden_match(self.match_data)
+            app.show_snackbar(f"✅ Match hidden: {self.home_team} vs {self.away_team}")
+            
+            # إزالة المباراة من جميع القوائم مباشرة
+            app.remove_match_from_all_lists(match_id)
+            
+            # إزالة الودجت من الشاشة
+            parent = self.parent
+            if parent:
+                parent.remove_widget(self)
+        else:
+            # إزالة المباراة من القائمة المخفية
+            app.remove_hidden_match(match_id)
+            app.show_snackbar(f"✅ Match unhidden: {self.home_team} vs {self.away_team}")
+            
+            # إزالة الودجت من الشاشة
+            parent = self.parent
+            if parent:
+                parent.remove_widget(self)
 
 
 KV = '''
@@ -916,7 +818,7 @@ KV = '''
                     MDLabel:
                         text: root.second_team_goals_for
                         theme_text_color: 'Custom'
-                        text_color: get_color_from_hex("#00FF00") if root.second_team_color == 'green' else (get_color_from_hex("#2196F3") if root.second_team_color == 'blue' else (get_color_from_hex("#FF0000") if root.second_team_color == 'red' else get_color_from_hex("#FFFFFF")))
+                        text_color: get_color_from_hex("#00FF00") if root.second_team_color == 'green' else (get_color_from_hex("#2196F3") if root.second_team_color == 'blue' else (get_color_from_hex("#FF0000") if root.second_team_color == 'red'else get_color_from_hex("#FFFFFF")))
                         font_size: "21sp"
                         halign: 'center'
                         bold: True
@@ -1319,7 +1221,6 @@ BoxLayout:
             text: 'Profile'
 '''
 
-
 class ProfessionalFootballApp(MDApp):
     current_tab = StringProperty('live')
     current_title = StringProperty('Live Matches')
@@ -1352,11 +1253,7 @@ class ProfessionalFootballApp(MDApp):
     current_calendar_date = None
     calendar_mode = BooleanProperty(False)
     
-    # ===========================================
-    # CALENDAR FILTER PROPERTIES - ADDED
-    # ===========================================
-    calendar_filter_active = BooleanProperty(False)
-    calendar_filter_type = StringProperty('perfect_1_1')
+    filter_ns_perfect_1_1_enabled = BooleanProperty(False)  
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1368,8 +1265,9 @@ class ProfessionalFootballApp(MDApp):
         self.leagues = []
         self.leagues_loaded = False
         self._update_event = None
-        
-        # Filter system
+
+        self.storage = SQLiteStorage()
+
         self.filtered_matches = []
         self.filter_results = {}
         self._is_filtering = False
@@ -1377,56 +1275,33 @@ class ProfessionalFootballApp(MDApp):
         self._auto_filter_event = None
         self.filter_interval = 600
         self.current_filter = "No Filter"
-        
-        # إعدادات التقويم
+
         self.current_calendar_date = datetime.now().date()
         self.calendar_mode = False
         
-        # ===========================================
-        # CALENDAR FILTER SYSTEM INIT - ADDED
-        # ===========================================
-        self.calendar_filtered_matches = []
-        self.calendar_filter_results = {}
-        self._is_calendar_filtering = False
-        
-        # Cache system for team stats
-        self.team_stats_cache = OrderedDict()
-        self.cache_max_size = 100
-        
-        # تهيئة مدير قاعدة البيانات
-        db_path = os.path.join(self.user_data_dir, 'football_data.db')
-        self.db = DatabaseManager(db_path)
-        
-        # الكاش للبيانات المخفية والمفضلة (لتجنب استعلامات SQL المتكررة)
-        self._hidden_match_ids_cache = None
-        self._hidden_match_ids_cache_time = None
-        self._favorite_match_ids_cache = None
-        self._favorite_match_ids_cache_time = None
-        self._cache_timeout = 30  # ثانية
 
+        self.team_stats_cache = {}
+        self.team_standings_cache = {}
+        self.cache_timeout = 300  
+    
     def build(self):
         self.theme_cls.primary_palette = 'Blue'
         self.theme_cls.theme_style = 'Light'
         
-        # تحميل البيانات من قاعدة البيانات
+        self.selected_leagues = [] 
+
+        self.update_time()
+        Clock.schedule_interval(self.update_time, 60)
+        
         self.load_favorites()
         self.load_hidden_matches()
         self.load_league_selection()
         self.load_favorite_leagues()
 
-        self.update_time()
-        Clock.schedule_interval(self.update_time, 60)
-        
-        # ===========================================
-        # CALENDAR FILTER INITIALIZATION - ADDED
-        # ===========================================
-        self.calendar_filter_dir = os.path.join(self.user_data_dir, 'calendar_filter')
-        if not os.path.exists(self.calendar_filter_dir):
-            os.makedirs(self.calendar_filter_dir)
-        
-        self.load_calendar_filter_state()
+        self.load_filter_state()
         
         Clock.schedule_once(lambda dt: self.load_leagues_and_matches(), 0.5)
+        
         Clock.schedule_once(lambda dt: self.schedule_auto_filter(), 10)
         
         return Builder.load_string(KV)
@@ -1437,291 +1312,313 @@ class ProfessionalFootballApp(MDApp):
             
         if self._auto_filter_event:
             self._auto_filter_event.cancel()
-        
+            
+        self.save_favorites()
+        self.save_hidden_matches()
+        self.save_favorite_leagues()
+        self.save_league_selection()        
+        self.save_filter_state()        
         super().on_stop()
 
-    # ===== الوظائف المحسنة للبيانات المخفية =====
-    
-    def load_hidden_matches(self):
-        """تحميل المباريات المخفية من قاعدة البيانات"""
-        self.hidden_matches = self.db.get_hidden_matches()
-        self._hidden_match_ids_cache = None  # إعادة تعيين الكاش
-        self._hidden_match_ids_cache_time = None
-    
-    def get_hidden_match_ids(self):
-        """الحصول على IDs المباريات المخفية مع كاش"""
-        now = time.time()
-        
-        # التحقق إذا كان الكاش صالحاً
-        if (self._hidden_match_ids_cache is not None and 
-            self._hidden_match_ids_cache_time is not None and
-            (now - self._hidden_match_ids_cache_time) < self._cache_timeout):
-            return self._hidden_match_ids_cache
-        
-        # جلب جديد من قاعدة البيانات
-        hidden_ids = self.db.get_hidden_match_ids()
-        self._hidden_match_ids_cache = hidden_ids
-        self._hidden_match_ids_cache_time = now
-        
-        return hidden_ids
-    
-    def get_favorite_match_ids(self):
-        """الحصول على IDs المباريات المفضلة مع كاش"""
-        now = time.time()
-        
-        # التحقق إذا كان الكاش صالحاً
-        if (self._favorite_match_ids_cache is not None and 
-            self._favorite_match_ids_cache_time is not None and
-            (now - self._favorite_match_ids_cache_time) < self._cache_timeout):
-            return self._favorite_match_ids_cache
-        
-        # جلب جديد من قاعدة البيانات
-        favorite_ids = self.db.get_favorite_match_ids()
-        self._favorite_match_ids_cache = favorite_ids
-        self._favorite_match_ids_cache_time = now
-        
-        return favorite_ids
-    
-    def refresh_hidden_cache(self):
-        """تحديث كاش المباريات المخفية"""
-        self._hidden_match_ids_cache = None
-        self._hidden_match_ids_cache_time = None
-    
-    def refresh_favorite_cache(self):
-        """تحديث كاش المباريات المفضلة"""
-        self._favorite_match_ids_cache = None
-        self._favorite_match_ids_cache_time = None
-    
-    def add_hidden_match(self, match):
-        """إضافة مباراة مخفية مع تحديث الكاش"""
-        match_id = str(match.get('id'))
-        
-        # التحقق المباشر من قاعدة البيانات
-        if not self.db.is_match_hidden(match_id):
-            if self.db.add_hidden_match(match):
-                # تحديث القائمة المحلية
-                self.hidden_matches.append(match.copy())
-                # تحديث الكاش
-                self.refresh_hidden_cache()
-                self.show_snackbar(f"Match hidden: {match.get('home_team')} vs {match.get('away_team')}")
-                return True
-            else:
-                self.show_snackbar("Failed to hide match")
-                return False
-        else:
-            self.show_snackbar(f"Match already hidden: {match.get('home_team')} vs {match.get('away_team')}")
-            return True
-    
-    def remove_hidden_match(self, match_id):
-        """إزالة مباراة مخفية مع تحديث الكاش"""
-        if self.db.remove_hidden_match(match_id):
-            # تحديث القائمة المحلية
-            self.hidden_matches = [m for m in self.hidden_matches if str(m.get('id')) != str(match_id)]
-            # تحديث الكاش
-            self.refresh_hidden_cache()
-            self.show_snackbar("Match unhidden")
-            return True
-        else:
-            self.show_snackbar("Failed to unhide match")
-            return False
-    
-    def clear_all_hidden_matches(self):
-        """مسح جميع المباريات المخفية مع تحديث الكاش"""
-        if self.db.clear_hidden_matches():
-            self.hidden_matches = []
-            self.refresh_hidden_cache()
-            self.show_snackbar("All hidden matches cleared")
-            return True
-        else:
-            self.show_snackbar("Failed to clear hidden matches")
-            return False
-    
-    def is_hidden(self, match_id):
-        """التحقق إذا كانت المباراة مخفية (باستخدام الكاش)"""
-        hidden_ids = self.get_hidden_match_ids()
-        return str(match_id) in hidden_ids
-    
-    # ===== الوظائف المحسنة للمباريات المفضلة =====
-    
-    def load_favorites(self):
-        """تحميل المباريات المفضلة من قاعدة البيانات"""
-        self.favorites = self.db.get_favorite_matches()
-        self._favorite_match_ids_cache = None
-        self._favorite_match_ids_cache_time = None
-    
-    def is_favorite(self, match_id):
-        """التحقق إذا كانت المباراة مفضلة (باستخدام الكاش)"""
-        favorite_ids = self.get_favorite_match_ids()
-        return str(match_id) in favorite_ids
-    
-    def add_favorite(self, match):
-        """إضافة مباراة مفضلة مع تحديث الكاش"""
-        match_id = str(match.get('id'))
-        
-        if not self.is_favorite(match_id):
-            if self.db.add_favorite_match(match):
-                self.favorites.append(match.copy())
-                self.refresh_favorite_cache()
-                self.show_snackbar("Match added to favorites")
-                if self.current_tab == 'live' and not self.calendar_mode:
-                    self.show_live_matches()
-                return True
-            else:
-                self.show_snackbar("Failed to add to favorites")
-                return False
-        else:
-            self.show_snackbar("Match already in favorites")
-            return True
-    
-    def remove_favorite(self, match_id):
-        """إزالة مباراة مفضلة مع تحديث الكاش"""
-        if self.db.remove_favorite_match(match_id):
-            self.favorites = [f for f in self.favorites if str(f.get('id')) != str(match_id)]
-            self.refresh_favorite_cache()
-            self.show_snackbar("Match removed from favorites")
-            if self.current_tab == 'live' and not self.calendar_mode:
-                self.show_live_matches()
-            elif self.current_tab == 'favorites':
-                self.show_favorites()
-            return True
-        else:
-            self.show_snackbar("Failed to remove from favorites")
-            return False
-    
-    # ===== الوظائف المحسنة للدوريات =====
-    
-    def load_league_selection(self):
-        """تحميل الدوريات المختارة من قاعدة البيانات"""
-        self.selected_leagues = self.db.get_selected_leagues()
-    
-    def load_favorite_leagues(self):
-        """تحميل الدوريات المفضلة من قاعدة البيانات"""
-        self.favorite_leagues = self.db.get_favorite_leagues()
-    
-    def is_favorite_league(self, league_id):
-        """التحقق إذا كان الدوري مفضلاً"""
-        return self.db.is_league_favorite(league_id)
-    
-    def add_favorite_league(self, league_name, league_id):
-        """إضافة دوري مفضل"""
-        if not self.is_favorite_league(league_id):
-            if self.db.add_favorite_league(league_id, league_name):
-                self.favorite_leagues.append({'name': league_name, 'id': league_id})
-                self.show_snackbar(f"League added to favorites: {league_name}")
-                return True
-            else:
-                self.show_snackbar("Failed to add league to favorites")
-                return False
-        else:
-            self.show_snackbar("League already in favorites")
-            return True
-    
-    def remove_favorite_league(self, league_id):
-        """إزالة دوري مفضل"""
-        if self.db.remove_favorite_league(league_id):
-            self.favorite_leagues = [f for f in self.favorite_leagues if f.get('id') != league_id]
-            self.show_snackbar("League removed from favorites")
-            if self.current_tab == 'favorites':
-                self.show_favorites()
-            return True
-        else:
-            self.show_snackbar("Failed to remove league from favorites")
-            return False
-    
-    def is_league_selected(self, league_id):
-        """التحقق إذا كان الدوري مختاراً"""
-        return self.db.is_league_selected(league_id)
-    
-    # ===== الوظائف المحسنة لعرض المباريات =====
-    
-    def get_matches_without_favorites_and_hidden(self, matches_list):
-        """تصفية المباريات المخفية والمفضلة (باستخدام الكاش)"""
+    def filter_out_hidden_matches_immediately(self, matches_list):
         if not matches_list:
             return []
+            
+        hidden_ids = {m.get('id') for m in self.hidden_matches}
         
-        # الحصول على IDs من الكاش
-        hidden_ids = self.get_hidden_match_ids()
-        favorite_ids = self.get_favorite_match_ids()
+        filtered = []
+        hidden_count = 0
         
-        filtered_list = []
         for match in matches_list:
-            match_id = str(match.get('id'))
-            status = match.get('status')
+            match_id = match.get('id')
             
-            # استبعاد المباريات المخفية
             if match_id in hidden_ids:
+                hidden_count += 1
+                continue
+            
+            filtered.append(match)
+        
+        if hidden_count > 0:
+            print(f"🚫 فلترة فورية: تم إزالة {hidden_count} مباراة مخفية")
+        
+        return filtered
+    
+    def filter_out_hidden_and_favorite_matches(self, matches_list):
+        hidden_ids = {m.get('id') for m in self.hidden_matches}
+        favorite_ids = {f.get('id') for f in self.favorites}
+        
+        filtered = []
+        hidden_count = 0
+        favorite_count = 0
+        
+        for match in matches_list:
+            match_id = match.get('id')
+
+            if match_id in hidden_ids:
+                hidden_count += 1
                 continue
 
-            # استبعاد المباريات المنتهية
-            if status in ['FT', 'AET', 'PEN']:
-                continue
-
-            # استبعاد المباريات المفضلة
             if match_id in favorite_ids:
-                continue
-
-            filtered_list.append(match)
-            
-        return filtered_list
-    
-    # ===== تحديث البيانات مع التصفية =====
-    
-    @mainthread
-    def update_matches_data(self, new_matches):
-        """تحديث بيانات المباريات مع التصفية الفورية للمخفي"""
-        if not new_matches:
-            return
-        
-        new_matches_dict = {str(m.get('id')): m for m in new_matches}
-        
-        # الحصول على IDs المخفية من الكاش
-        hidden_ids = self.get_hidden_match_ids()
-        
-        updated_self_matches = []
-        should_refresh_ui = False
-        
-        for old_match in self.matches:
-            match_id = str(old_match.get('id'))
-            new_match = new_matches_dict.pop(match_id, None)
-            
-            # إذا كانت المباراة مخفية، نتخطاها
-            if match_id in hidden_ids:
+                favorite_count += 1
                 continue
             
-            if new_match:
-                old_status = old_match.get('status')
-                new_status = new_match.get('status')
-                
-                old_match.update(new_match)
-                self.find_and_update_match_widget(old_match)
-                
-                updated_self_matches.append(old_match)
-                
-                if old_status in ['1H', '2H', 'HT', 'LIVE'] and new_status in ['FT', 'AET', 'PEN']:
-                    should_refresh_ui = True
-            else:
-                updated_self_matches.append(old_match)
-
-        # إضافة المباريات الجديدة فقط إذا لم تكن مخفية
-        for new_match_id, new_match in new_matches_dict.items():
-            if new_match_id not in hidden_ids:
-                updated_self_matches.append(new_match)
-                should_refresh_ui = True
+            filtered.append(match)
         
-        self.matches = updated_self_matches
-        self.today_matches = [m for m in self.matches if self._is_today(m.get('time'))]
-
-        if should_refresh_ui and self.current_tab == 'live' and not self.calendar_mode:
-            if self.current_filter != "No Filter":
-                self.run_filter_process_threaded() 
-            else:
-                self.show_live_matches()
+        if hidden_count > 0 or favorite_count > 0:
+            print(f"🚫 فلترة شاملة: تم إزالة {hidden_count} مخفية و {favorite_count} مفضلة")
         
-        self.root.ids.topbar.right_action_items[0][0] = 'update'
-        Clock.schedule_once(lambda dt: self._reset_update_icon(), 2)
-    
-    # ===== بقية الوظائف (بدون تغييرات رئيسية) =====
-    
+        return filtered
+
+    def load_filter_state(self):
+        self.filter_ns_perfect_1_1_enabled = self.storage.load_filter_state('filter_ns_perfect_1_1_enabled')
+            
+    def save_filter_state(self):
+        self.storage.save_filter_state('filter_ns_perfect_1_1_enabled', self.filter_ns_perfect_1_1_enabled)
+
+    def filter_ns_perfect_1_1(self, match_data):
+        try:
+            home_team_id = match_data.get('home_team_id')
+            away_team_id = match_data.get('away_team_id')
+            league_id = match_data.get('league_id')
+            season = match_data.get('season', datetime.now().year)
+            status = match_data.get('status', 'NS')
+
+            if status not in ['NS', 'TBD']:
+                return "❌ no (Match already started)"
+
+            if not all([home_team_id, away_team_id, league_id]):
+                return "❌ no (Missing team/league data)"
+
+            home_total_goals, home_count = self.fetch_team_last_goals_for_filter(
+                home_team_id, league_id, season, is_home_team=True, matches_count=3
+            )
+            
+            away_total_goals, away_count = self.fetch_team_last_goals_for_filter(
+                away_team_id, league_id, season, is_home_team=False, matches_count=3
+            )
+
+            if home_count < 3 or away_count < 3:
+                return f"❌ no (Not enough matches: H:{home_count}, A:{away_count})"
+
+            if home_total_goals == away_total_goals:
+                return f"✅ yes (Equal goals: {home_total_goals}-{away_total_goals})"
+                
+            if home_total_goals > away_total_goals:
+                winner_id = home_team_id
+                winner_label = "Home"
+                winner_goals = home_total_goals
+                
+                loser_id = away_team_id
+                loser_label = "Away"
+                loser_goals = away_total_goals
+            else:
+                winner_id = away_team_id
+                winner_label = "Away"
+                winner_goals = away_total_goals
+                
+                loser_id = home_team_id
+                loser_label = "Home"
+                loser_goals = home_total_goals
+
+            winner_standings = self.fetch_team_standings_for_filter(winner_id, league_id, season)
+            loser_standings = self.fetch_team_standings_for_filter(loser_id, league_id, season)
+            
+            winner_rank = winner_standings.get('current_rank', 'N/A')
+            loser_rank = loser_standings.get('current_rank', 'N/A')
+
+            try:
+                winner_rank_str = str(winner_rank).strip()
+                loser_rank_str = str(loser_rank).strip()
+
+                if not winner_rank_str.isdigit() or not loser_rank_str.isdigit():
+                    return f"❌ no (Invalid Rank Format: +:{winner_rank}, -:{loser_rank})"
+
+                winner_rank_int = int(winner_rank_str)
+                loser_rank_int = int(loser_rank_str)
+                
+            except (ValueError, TypeError):
+                return f"❌ no (Rank Processing Error: +:{winner_rank}, -:{loser_rank})"
+
+            forbidden_pairs = {
+                (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 10), (1, 11), (1, 12),
+                (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14),
+                (3, 2), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15),
+                (4, 2), (4, 3), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15), (4, 16),
+                (5, 2), (5, 3), (5, 4), (5, 6), (5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16),
+                (6, 2), (6, 3), (6, 4), (6, 5), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16),
+                (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (7, 8), (7, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (7, 16),
+                (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (8, 7), (8, 9), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16),
+                (9, 2), (9, 3), (9, 4), (9, 5), (9, 6), (9, 7), (9, 8), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16),
+                (10, 4), (10, 5), (10, 6), (10, 7), (10, 8), (10, 9), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (10, 17), (10, 18),
+                (11, 4), (11, 6), (11, 7), (11, 8), (11, 9), (11, 10), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18),
+                (12, 6), (12, 7), (12, 8), (12, 9), (12, 10), (12, 11), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (12, 18),
+                (13, 7), (13, 8), (13, 10), (13, 11), (13, 12), (13, 14), (13, 15), (13, 16), (13, 17), (13, 18),
+                (14, 8), (14, 9), (14, 10), (14, 11), (14, 12), (14, 13), (14, 15), (14, 16), (14, 17), (14, 18),
+                (15, 8), (15, 9), (15, 10), (15, 11), (15, 12), (15, 13), (15, 14),
+                (16, 8), (16, 9), (16, 10), (16, 11), (16, 12), (16, 13), (16, 14), (16, 15),
+                (17, 15)
+            }
+            current_pair = (winner_rank_int, loser_rank_int)
+
+            if current_pair in forbidden_pairs:
+                return f"❌ no (Forbidden Rank Pair: +{winner_rank_int} vs -{loser_rank_int})"
+
+            goals_diff = winner_goals - loser_goals
+            
+            return f"✅ yes (+:{winner_label} {winner_goals} | -:{loser_label} {loser_goals} | [+]{winner_rank_int} vs [-]{loser_rank_int} | Diff: +{goals_diff})"
+                
+        except Exception as e:
+            print(f"NS Perfect 1_1 Filter Error: {e}")
+            return "❌ no (System Error)"
+
+    def fetch_team_last_goals_for_filter(self, team_id, league_id, season, is_home_team, matches_count=3):
+        cache_key = f"goals_{team_id}_{league_id}_{season}_{'home' if is_home_team else 'away'}_last_{matches_count}"
+        
+        if cache_key in self.team_stats_cache:
+            cached_data = self.team_stats_cache[cache_key]
+            cached_time = cached_data.get('time', 0)
+            if time.time() - cached_time < self.cache_timeout:
+                return cached_data['result']
+        
+        try:
+            url = f"{self.base_url}/fixtures"
+            params = {
+                'team': team_id,
+                'league': league_id,
+                'season': season,
+                'last': 15  
+            }
+            
+            response = requests.get(url, headers=self.headers, params=params, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                matches = data.get('response', [])
+                
+                if not matches:
+                    result = (0, 0)
+                    self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
+                    return result
+                
+                total_goals = 0
+                valid_matches = 0
+                
+                for match in matches:
+                    if valid_matches >= matches_count:
+                        break
+                        
+                    fixture = match.get('fixture', {})
+                    match_league = match.get('league', {})
+                    
+                    if (fixture.get('status', {}).get('short') == 'FT' and 
+                        match_league.get('id') == league_id):
+                        
+                        teams = match.get('teams', {})
+                        goals = match.get('goals', {})
+
+                        is_current_team_home = teams.get('home', {}).get('id') == team_id
+                        
+                        if (is_home_team and is_current_team_home) or (not is_home_team and not is_current_team_home):
+                            if is_current_team_home:
+                                goals_for = goals.get('home', 0)
+                            else:
+                                goals_for = goals.get('away', 0)
+                            
+                            total_goals += goals_for
+                            valid_matches += 1
+                
+                result = (total_goals, valid_matches)
+                self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
+                return result
+                
+            result = (0, 0)
+            self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
+            return result
+            
+        except Exception as e:
+            print(f"Error in fetch_team_last_goals_for_filter for team {team_id}: {e}")
+            result = (0, 0)
+            self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
+            return result
+
+    def fetch_team_standings_for_filter(self, team_id, league_id, season):
+        cache_key = f"standings_filter_{league_id}_{season}_{team_id}"
+
+        if cache_key in self.team_standings_cache:
+            cached_data = self.team_standings_cache[cache_key]
+            cached_time = cached_data.get('time', 0)
+            if time.time() - cached_time < self.cache_timeout:
+                return cached_data['result']
+        
+        try:
+            url = f"{self.base_url}/standings"
+            params = {
+                'league': league_id,
+                'season': season
+            }
+            
+            response = requests.get(url, headers=self.headers, params=params, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                standings = data.get('response', [])
+                
+                if standings:
+                    league_standings = standings[0].get('league', {}).get('standings', [])
+
+                    for standing_group in league_standings:
+                        for team_standing in standing_group:
+                            if team_standing.get('team', {}).get('id') == team_id:
+                                result = {
+                                    'current_rank': team_standing.get('rank'),
+                                    'points': team_standing.get('points'),
+                                    'form': team_standing.get('form')
+                                }
+                                self.team_standings_cache[cache_key] = {'result': result, 'time': time.time()}
+                                return result
+                
+
+            result = {'current_rank': 'N/A', 'points': 0, 'form': ''}
+            self.team_standings_cache[cache_key] = {'result': result, 'time': time.time()}
+            return result
+            
+        except Exception as e:
+            print(f"Error in fetch_team_standings_for_filter: {e}")
+            result = {'current_rank': 'N/A', 'points': 0, 'form': ''}
+            self.team_standings_cache[cache_key] = {'result': result, 'time': time.time()}
+            return result
+
+    def load_favorites(self):
+        self.favorites = self.storage.load_favorites()
+
+    def save_favorites(self):
+        self.storage.save_favorites(self.favorites)
+
+    def load_hidden_matches(self):
+        self.hidden_matches = self.storage.load_hidden_matches()
+
+    def save_hidden_matches(self):
+        self.storage.save_hidden_matches(self.hidden_matches)
+
+    def load_league_selection(self):
+        self.selected_leagues = self.storage.load_league_selection()
+
+    def save_league_selection(self):
+        self.storage.save_league_selection(self.selected_leagues)
+
+    def load_favorite_leagues(self):
+        self.favorite_leagues = self.storage.load_favorite_leagues()
+
+    def save_favorite_leagues(self):
+        self.storage.save_favorite_leagues(self.favorite_leagues)
+
+    def toggle_filter_ns_perfect_1_1(self):
+        self.filter_ns_perfect_1_1_enabled = not self.filter_ns_perfect_1_1_enabled
+        self.save_filter_state()
+        status = "Enabled" if self.filter_ns_perfect_1_1_enabled else "Disabled"
+        self.show_snackbar(f"NS Filter (Perfect 1_1) is now {status}")
+        self.show_profile()  
+
     def on_calendar_date_selected(self, selected_date):
         self.current_calendar_date = selected_date
         self.calendar_mode = True
@@ -1740,28 +1637,14 @@ class ProfessionalFootballApp(MDApp):
         self.show_calendar_matches(selected_date)
 
     def show_calendar_matches(self, target_date):
-        if self.calendar_filter_active:
-            filter_type_display = self.calendar_filter_type.replace('_', ' ').title()
-            loading_msg = f"Loading scheduled matches for {target_date.strftime('%d/%m/%Y')}..."
-            loading_msg += f"\nApplying {filter_type_display} filter..."
-            self.show_loading(loading_msg)
-        else:
-            self.show_loading(f"Loading scheduled matches for {target_date.strftime('%d/%m/%Y')}...")
+        self.show_loading(f"Loading scheduled matches for {target_date.strftime('%d/%m/%Y')}...")
         
         def fetch_and_display():
             try:
                 matches = self.fetch_matches_by_date_improved(target_date)
                 processed_matches = self.process_matches_improved(matches)
                 
-                # تطبيق فلتر التقويم إذا كان نشطاً
-                if self.calendar_filter_active:
-                    final_matches = self.run_calendar_filter_process(processed_matches)
-                    print(f"✅ After filter: {len(final_matches)} matches remain")
-                else:
-                    final_matches = processed_matches
-                    print(f"ℹ️ No filter applied, showing all {len(final_matches)} matches")
-                
-                Clock.schedule_once(lambda dt: self.display_calendar_matches_improved(final_matches, target_date), 0)
+                Clock.schedule_once(lambda dt: self.display_calendar_matches_improved(processed_matches, target_date), 0)
             except Exception as e:
                 print(f"❌ خطأ في جلب المباريات: {e}")
                 Clock.schedule_once(lambda dt: self.display_calendar_matches_improved([], target_date), 0)
@@ -1784,7 +1667,10 @@ class ProfessionalFootballApp(MDApp):
                 
                 if data.get('response'):
                     matches = self.process_api_response_improved(data['response'])
-                    print(f"✅ تم العثور على {len(matches)} مباراة")
+
+                    matches = self.filter_out_hidden_matches_immediately(matches)
+                    
+                    print(f"✅ تم العثور على {len(matches)} مباراة (بعد إزالة المخفية)")
                     return matches
                 else:
                     print("❌ لا توجد بيانات في الاستجابة")
@@ -1892,6 +1778,28 @@ class ProfessionalFootballApp(MDApp):
                 continue
         return processed
 
+    def get_matches_without_favorites_and_hidden(self, matches_list):
+        hidden_ids = {m.get('id') for m in self.hidden_matches}
+        
+        filtered_list = []
+        hidden_count = 0
+        
+        for match in matches_list:
+            match_id = match.get('id')
+
+            if match_id in hidden_ids:
+                hidden_count += 1
+                continue  
+            if self.is_favorite(match_id):
+                continue
+                
+            filtered_list.append(match)
+        
+        if hidden_count > 0:
+            print(f"🚫 تم إزالة {hidden_count} مباراة مخفية نهائيًا ولن تعود")
+        
+        return filtered_list
+
     @mainthread
     def display_calendar_matches_improved(self, matches, target_date):
         container = self.root.ids.main_list
@@ -1909,47 +1817,44 @@ class ProfessionalFootballApp(MDApp):
             date_display = target_date.strftime('%d/%m/%Y')
             date_label = f"📅 SCHEDULED MATCHES ({date_display})"
 
-        # إضافة حالة الفلتر في العنوان إذا كان نشطاً
-        if self.calendar_filter_active:
-            filter_type_display = self.calendar_filter_type.replace('_', ' ').title()
-            date_label += f" - [{filter_type_display} FILTER ACTIVE]"
-        
         header = OneLineListItem(text=date_label)
         header.md_bg_color = get_color_from_hex("#E3F2FD")
         container.add_widget(header)
         
         if matches:
-            # فقط إذا كان الفلتر غير نشط، نطبق تصفية الدوريات
-            if not self.calendar_filter_active:
-                required_league_ids = self.get_required_league_ids()
-                
-                if required_league_ids:
-                    filtered_matches = [
-                        match for match in matches
-                        if match.get('league_id') in required_league_ids
-                    ]
-                    print(f"🔍 بعد التصفية حسب الدوري: {len(filtered_matches)} مباراة مجدولة")
-                else:
-                    filtered_matches = matches
-            else:
-                # إذا كان الفلتر نشطاً، نستخدم المباريات التي تمت تصفيتها بالفعل
-                filtered_matches = matches
-                
-            # تطبيق التصفية للمباريات المخفية والمفضلة
-            final_matches = self.get_matches_without_favorites_and_hidden(filtered_matches)
+            matches = self.filter_out_hidden_matches_immediately(matches)
             
-            if self.calendar_filter_active:
-                print(f"🎯 بعد تطبيق فلتر التقويم: {len(final_matches)} مباراة مجدولة")
+            required_league_ids = self.get_required_league_ids()
+            
+            if required_league_ids:
+                filtered_matches = [
+                    match for match in matches
+                    if match.get('league_id') in required_league_ids
+                ]
+                print(f"🔍 بعد التصفية حسب الدوري: {len(filtered_matches)} مباراة مجدولة")
             else:
-                print(f"ℹ️ بدون فلتر: {len(final_matches)} مباراة مجدولة")
+                filtered_matches = matches
+
+            final_matches_filtered = []
+            if self.filter_ns_perfect_1_1_enabled:
+                print(f"🎯 تطبيق فلتر NS Perfect 1_1 على {len(filtered_matches)} مباراة")
+                for match in filtered_matches:
+                    if match.get('status') == 'NS':  
+                        filter_result = self.filter_ns_perfect_1_1(match)
+                        if "✅ yes" in filter_result:  
+                            final_matches_filtered.append(match)
+                            print(f"✅ مباراة تمت تصفيتها: {match.get('home_team')} vs {match.get('away_team')}")
+                print(f"🎯 بعد تطبيق فلتر NS Perfect 1_1: {len(final_matches_filtered)} مباراة مجدولة")
+            else:
+                final_matches_filtered = filtered_matches
+                print(f"🎯 فلتر NS Perfect 1_1 غير مفعل، عرض جميع المباريات: {len(final_matches_filtered)}")
+
+            final_matches = self.filter_out_hidden_and_favorite_matches(final_matches_filtered)
+            print(f"🚫 النتيجة النهائية: {len(final_matches)} مباراة مجدولة (تم حذف {len(final_matches_filtered) - len(final_matches)} مباراة)")
             
             if final_matches:
-                count_text = f"Found {len(final_matches)} scheduled matches"
-                if self.calendar_filter_active:
-                    count_text += f" (with {self.calendar_filter_type.replace('_', ' ')} filter)"
-                    
                 count_label = MDLabel(
-                    text=count_text,
+                    text=f"Found {len(final_matches)} scheduled matches",
                     font_style='Caption',
                     halign='center',
                     theme_text_color='Secondary',
@@ -1962,15 +1867,14 @@ class ProfessionalFootballApp(MDApp):
                     item = OptimizedCompactMatchItem(match_data=match)
                     container.add_widget(item)
             else:
-                if self.calendar_filter_active:
-                    self.show_empty_message(f"No matches found with {self.calendar_filter_type.replace('_', ' ')} filter")
-                else:
-                    self.show_empty_message(f"No scheduled matches found for {target_date.strftime('%d/%m/%Y')}")
+                no_matches_text = "No scheduled matches found"
+                if required_league_ids:
+                    no_matches_text += " with current league filters"
+                if self.filter_ns_perfect_1_1_enabled:
+                    no_matches_text += " and NS Perfect 1_1 filter"
+                self.show_empty_message(no_matches_text)
         else:
-            if self.calendar_filter_active:
-                self.show_empty_message(f"No scheduled matches with {self.calendar_filter_type.replace('_', ' ')} filter")
-            else:
-                self.show_empty_message(f"No scheduled matches found for {target_date.strftime('%d/%m/%Y')}")
+            self.show_empty_message(f"No scheduled matches found for {target_date.strftime('%d/%m/%Y')}")
 
     def show_stats_popup_improved(self, match_data):
         try:
@@ -2010,7 +1914,6 @@ class ProfessionalFootballApp(MDApp):
             season = match_data.get('season', datetime.now().year)
             
             if home_team_id and away_team_id and league_id:
-                
                 def fetch_stats():
                     try:
                         first_team_role, second_team_role = self.determine_team_order(match_data)
@@ -2058,7 +1961,7 @@ class ProfessionalFootballApp(MDApp):
                 'team': team_id,
                 'league': league_id,
                 'season': season,
-                'last': 10
+                'last': 15
             }
             
             response = self.fetch_with_retry(url, params, max_retries=2)
@@ -2142,439 +2045,65 @@ class ProfessionalFootballApp(MDApp):
                 'last_season': season - 1
             }
 
-    # ===========================================
-    # CALENDAR FILTER FUNCTIONS - ADDED
-    # ===========================================
+    def is_hidden(self, match_id):
+        return any(m.get('id') == match_id for m in self.hidden_matches)
 
-    def fetch_team_last_matches(self, team_id, league_id, season, is_home=True):
-        """جلب آخر 3 مباريات للفريق في نفس الدوري (Home أو Away فقط)"""
+    def add_hidden_match(self, match):
+        if not self.is_hidden(match.get('id')):
+            self.hidden_matches.append(match.copy())
+            self.save_hidden_matches()
+            print(f"✅ تم إضافة المباراة المخفية: {match.get('home_team')} vs {match.get('away_team')}")
+
+    def remove_hidden_match(self, match_id):
+        # إزالة المباراة من القائمة في الذاكرة
+        self.hidden_matches = [m for m in self.hidden_matches if m.get('id') != match_id]
+        # حفظ التغييرات في قاعدة البيانات
+        self.save_hidden_matches()
+        print(f"🗑️ تم حذف المباراة المخفية {match_id} من قاعدة البيانات")
+
+    def remove_match_from_all_lists(self, match_id):
+        self.matches = [m for m in self.matches if m.get('id') != match_id]        
+        self.today_matches = [m for m in self.today_matches if m.get('id') != match_id]         
+        self.filtered_matches = [m for m in self.filtered_matches if m.get('id') != match_id]
         
-        # --- [استخدام الكاش] ---
-        cache_key = f"last_matches_{team_id}_{league_id}_{season}_{'home' if is_home else 'away'}"
-        cached_data = self.team_stats_cache.get(cache_key)
-        if cached_data is not None:
-            return cached_data
-        # ---------------------------------------------------------
+        print(f"🗑️ تمت إزالة المباراة {match_id} من جميع القوائم الداخلية")
 
-        try:
-            url = f"{self.base_url}/fixtures"
-            params = {
-                'team': team_id,
-                'league': league_id,
-                'season': season,
-                'last': 15  # نجلب 15 مباراة لضمان وجود 3 مباريات من النوع المطلوب
-            }
-            
-            print(f"🔍 Fetching last matches for team {team_id}, home={is_home}")
-            
-            response = requests.get(url, headers=self.headers, params=params, timeout=20)
-            
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('response'):
-                    all_matches = self.process_api_response_improved(data['response'])
-                    
-                    # تصفية المباريات حسب النوع المطلوب
-                    filtered_matches = []
-                    for match in all_matches:
-                        # التحقق من حالة المباراة (نأخذ فقط المباريات المنتهية FT)
-                        if match.get('status') != 'FT':
-                            continue
-                        
-                        if is_home:
-                            # نريد مباريات Home فقط (الفريق هو المضيف)
-                            if match.get('home_team_id') == team_id:
-                                filtered_matches.append(match)
-                        else:
-                            # نريد مباريات Away فقط (الفريق هو الضيف)
-                            if match.get('away_team_id') == team_id:
-                                filtered_matches.append(match)
-                    
-                    # ترتيب المباريات من الأحدث إلى الأقدم
-                    filtered_matches.sort(key=lambda x: x.get('time', ''), reverse=True)
-                    
-                    # أخذ آخر 3 مباريات فقط
-                    final_matches = filtered_matches[:3]
-                    
-                    print(f"✅ Found {len(final_matches)} last matches for team {team_id}")
-                    
-                    # --- [حفظ في الكاش] ---
-                    self.team_stats_cache[cache_key] = final_matches
-                    return final_matches
-            
-            print(f"⚠️ No matches found for team {team_id}")
-            return []
-            
-        except Exception as e:
-            print(f"❌ Error fetching last matches for team {team_id}: {e}")
-            return []
+    def is_favorite(self, match_id):
+        return any(f.get('id') == match_id for f in self.favorites)
 
-    def calculate_total_goals(self, matches, is_home=True):
-        """حساب إجمالي الأهداف في المباريات"""
-        if not matches or len(matches) < 3:
-            # إذا لم يكن هناك 3 مباريات، نعتبر الأهداف = 0
-            return 0
-        
-        total_goals = 0
-        
-        for idx, match in enumerate(matches[:3]):  # نأخذ فقط آخر 3 مباريات
-            try:
-                # التحقق من أن المباراة منتهية (FT)
-                if match.get('status') != 'FT':
-                    continue
-                    
-                if is_home:
-                    goals = match.get('home_score')
-                else:
-                    goals = match.get('away_score')
-                
-                if goals is not None:
-                    total_goals += int(goals)
-                    print(f"   Match {idx+1}: {goals} goals")
-            except (ValueError, TypeError):
-                continue
-        
-        return total_goals
+    def add_favorite(self, match):
+        if not self.is_favorite(match.get('id')):
+            self.favorites.append(match.copy())
+            self.save_favorites()
+            if self.current_tab == 'live' and not self.calendar_mode:
+                self.show_live_matches()
 
-    def filter_condition_perfect_1_1(self, match_data):
+    def remove_favorite(self, match_id):
+        self.favorites = [f for f in self.favorites if f.get('id') != match_id]
+        self.save_favorites()
+        if self.current_tab == 'live' and not self.calendar_mode:
+            self.show_live_matches()
+        elif self.current_tab == 'favorites':
+            self.show_favorites()
 
-        forbidden_groups = [
-            {
-                'current_rank_1': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
-                'last_rank_2': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15), (5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (10, 11), (10, 12), (10, 13), (10, 14)},
-            },
-            {
-                'current_rank_1': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16)},
-                'last_rank_2': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (5, 17), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16), (6, 17), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (13, 14), (13, 15), (14, 15), (14, 16)},
-            },
-            {
-                'current_rank_1': {(7, 8), (7, 9), (8, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 14)},
-                'last_rank_2': {(1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 13), (2, 10), (3, 10), (3, 11), (3, 12), (4, 10), (4, 11), (4, 12), (5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (5, 17), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16), (6, 17), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (13, 14), (13, 15), (14, 15), (14, 16)},
-            },
-            {
-                'current_rank_1': {(9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (10, 17), (10, 18), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (12, 18), (13, 14), (13, 15), (13, 16), (13, 17), (13, 18), (14, 15), (14, 16), (14, 17), (14, 18)},
-                'last_rank_2': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (5, 17), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16), (6, 17), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (9, 17), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (10, 17), (10, 18), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (13, 14), (13, 15), (13, 16), (14, 15), (14, 16), (14, 17), (14, 18)},
-            },
-            {
-                'current_rank_1': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (6, 10), (6, 11), (6, 12), (7, 10), (7, 11), (7, 12), (8, 10), (8, 11), (8, 12)},
-                'last_rank_2': {(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (4, 3), (5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (11, 4), (10, 4)},
-            },
-            {
-                'current_rank_1': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
-                'last_rank_2': {(6, 5), (7, 5), (7, 6), (8, 5), (8, 6), (9, 5), (9, 6), (10, 5), (10, 6), (11, 5), (11, 6), (12, 5), (12, 6)},
-            },
-            {
-                'current_rank_1': {(1, 7), (1, 8), (1, 9), (2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15), (4, 16)},
-                'last_rank_2': {(9, 7), (10, 8), (10, 9), (11, 7), (11, 8), (11, 9), (12, 7), (12, 8), (12, 9), (13, 7), (13, 8), (13, 9), (14, 7), (14, 8), (14, 9), (15, 7), (15, 8), (15, 9), (16, 9), (10, 11), (11, 10), (12, 10), (12, 11), (13, 10), (13, 11), (13, 12), (14, 10), (14, 11), (14, 12), (14, 13), (15, 10), (15, 11), (15, 12), (15, 13), (15, 14), (16, 10), (16, 11), (16, 12), (16, 13), (16, 14), (16, 15)},
-            },
-            {
-                'current_rank_1': {(3, 2), (4, 2), (4, 3), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (11, 4), (10, 4)},
-                'last_rank_2': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
-            },
-            {
+    def is_favorite_league(self, league_id):
+        return any(f.get('id') == league_id for f in self.favorite_leagues)
 
-                'current_rank_1': {(11, 7), (10, 7), (9, 7), (11, 8), (10, 8), (14, 9), (13, 9), (12, 9), (11, 9), (15, 10), (14, 10), (13, 10), (12, 10), (13, 11), (13, 12), (12, 11)},
-                'last_rank_2': {(3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (4, 5), (4, 6), (4, 7), (4, 8)},
-            },
-            {
-                'current_rank_1': {(10, 6), (9, 6), (8, 6), (7, 6), (10, 5), (9, 5), (8, 5), (7, 5), (6, 5)},
-                'last_rank_2': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (4, 5), (4, 6), (4, 7), (4, 8)},
-            },
-            {
+    def add_favorite_league(self, league_name, league_id):
+        if not self.is_favorite_league(league_id):
+            self.favorite_leagues.append({'name': league_name, 'id': league_id})
+            self.save_favorite_leagues()
+            self.show_snackbar(f"League added to favorites: {league_name}")
 
-                'current_rank_1': {(5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (11, 4), (10, 4), (10, 5), (10, 6), (10, 7), (10, 8), (10, 9), (9, 5), (9, 5), (9, 6), (9, 7), (9, 8), (8, 5), (8, 6), (8, 7), (7, 5), (7, 6), (6, 5)},
-                'last_rank_2': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16)},
-            },
-            {
-                'current_rank_1': {(6, 4), (7, 6), (10, 6), (10, 7), (10, 9), (11, 6), (11, 7), (11, 9), (11, 10), (12, 6), (12, 7), (12, 9), (13, 7), (14, 9), (15, 9), (16, 9), (11, 10), (12, 10), (12, 11), (13, 10), (13, 11), (13, 12), (14, 10), (14, 11), (14, 12), (14, 13), (15, 10), (15, 11), (15, 12), (15, 13), (15, 14), (16, 10), (16, 11), (16, 12), (16, 13), (16, 14), (16, 15), (17, 15)},
-                'last_rank_2': {(7, 12), (7, 13), (7, 14), (7, 15), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (10, 17), (10, 18), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 14), (12, 15), (12, 16), (12, 17), (12, 18), (13, 15), (13, 16)},
-            },
-            {
+    def remove_favorite_league(self, league_id):
+        self.favorite_leagues = [f for f in self.favorite_leagues if f.get('id') != league_id]
+        self.save_favorite_leagues()
+        self.show_snackbar("League removed from favorites")
+        if self.current_tab == 'favorites':
+            self.show_favorites()
 
-                'current_rank_1': {(7, 6), (8, 6), (9, 6), (10, 6), (11, 6), (12, 6)},
-                'last_rank_2': {(11, 5), (10, 5), (9, 5), (8, 5), (7, 5), (12, 6), (11, 6), (10, 6), (9, 6), (8, 7), (8, 6), (7, 6), (11, 8), (10, 8), (9, 8), (13, 9), (12, 9), (11, 9), (10, 9), (15, 10), (15, 11), (15, 12), (15, 13)},
-            },
-            {
-                'current_rank_1': {(13, 7), (12, 7), (11, 7), (10, 7), (9, 7)},
-                'last_rank_2': {(6, 2), (5, 2), (4, 2), (8, 3), (7, 3), (6, 3), (5, 3), (8, 4), (7, 4), (6, 4), (5, 4)},
-            },
-            {
-
-                'current_rank_1': {(12, 8), (11, 8), (10, 8), (9, 8)},
-                'last_rank_2': {(6, 2), (5, 2), (4, 2), (9, 3), (8, 3), (7, 3), (6, 3), (5, 3), (8, 4), (7, 4), (6, 4), (5, 4), (4, 1), (3, 1)},
-            },
-            {
-                'current_rank_1': {(16, 8), (15, 8), (14, 8), (13, 8), (12, 8), (11, 8), (10, 8), (9, 8)},
-                'last_rank_2': {(11, 5), (10, 5), (9, 5), (8, 5), (7, 5), (12, 6), (11, 6), (11, 10), (10, 6), (9, 6), (8, 6), (7, 6), (12, 8), (11, 8), (10, 9), (10, 8), (9, 8), (15, 9), (14, 9), (13, 9), (12, 9), (11, 9), (10, 9), (15, 10), (15, 11), (15, 12), (15, 13), (16, 11), (14, 10), (12, 10)},
-            },
-            {
-                'current_rank_1': {(14, 10), (13, 10), (12, 10), (11, 10), (9, 10), (14, 11), (13, 11), (12, 11), (14, 12), (13, 12)},
-                'last_rank_2': {(14, 7), (15, 7), (13, 7), (12, 7), (14, 8), (15, 8), (13, 8), (12, 8), (15, 9), (11, 8), (11, 7), (14, 9), (13, 9), (12, 9), (11, 9), (12, 5), (11, 5), (10, 5), (9, 5), (8, 5), (7, 5), (6, 5), (10, 4), (9, 4), (8, 4), (7, 4), (6, 4), (5, 4)},
-            }
-        ]
-        
-        try:
-            league_id = match_data['league_id']
-            season = match_data['season']
-            home_team_id = match_data['home_team_id']
-            away_team_id = match_data['away_team_id']
-            
-            # 1. جلب بيانات آخر 3 مباريات والأهداف
-            home_last_matches = self.fetch_team_last_matches(home_team_id, league_id, season, is_home=True)
-            away_last_matches = self.fetch_team_last_matches(away_team_id, league_id, season, is_home=False)
-            
-            # التحقق من توفر 3 مباريات منتهية (FT)
-            if len(home_last_matches) < 3 or len(away_last_matches) < 3:
-                return f"✅ yes (no last 3 match)"
-            
-            home_total_goals = self.calculate_total_goals(home_last_matches, is_home=True)
-            away_total_goals = self.calculate_total_goals(away_last_matches, is_home=False)
-            
-            # 2. القاعدة الذهبية (التعادل في الأهداف)
-            if home_total_goals == away_total_goals:
-                return f"✅ yes (Goals Equal: {home_total_goals}-{away_total_goals})"
-            
-            # 3. تحديد الفريق الهدف (Target)
-            if home_total_goals > away_total_goals:
-                target_is_home = True
-                target_goals = home_total_goals
-                other_goals = away_total_goals
-                target_id = home_team_id
-            else:
-                target_is_home = False
-                target_goals = away_total_goals
-                other_goals = home_total_goals
-                target_id = away_team_id
-            
-            target_name = match_data['home_team'] if target_is_home else match_data['away_team']
-
-            # 4. جلب الترتيب الحالي والماضي
-            home_standings = self.fetch_team_standings(home_team_id, league_id, season)
-            away_standings = self.fetch_team_standings(away_team_id, league_id, season)
-
-            ch_raw = home_standings.get('current_rank')
-            ca_raw = away_standings.get('current_rank')
-
-            if ch_raw == 'N/A' or ca_raw == 'N/A':
-                return f"❌ no (Goals: {target_goals}-{other_goals} - No current rank for one team)"
-
-            try:
-                ch = int(ch_raw)
-                ca = int(ca_raw)
-            except:
-                return f"✅ yes (Target: {target_name} with {target_goals} goals vs {other_goals} - Invalid current rank)"
-
-            lh_raw = home_standings.get('last_rank')
-            la_raw = away_standings.get('last_rank')
-            
-            lh_type = home_standings.get('last_rank_type')
-            la_type = away_standings.get('last_rank_type')
-            
-            # استبعاد الفرق الصاعدة/الهابطة
-            if lh_type in ['promoted', 'relegated', 'new_team'] or la_type in ['promoted', 'relegated', 'new_team']:
-                return f"❌ no (Goals: {target_goals}-{other_goals} - Promoted/Relegated/New Team)"
-
-            try:
-                lh = int(str(lh_raw)) if str(lh_raw).isdigit() else 'N/A'
-                la = int(str(la_raw)) if str(la_raw).isdigit() else 'N/A'
-                
-                if lh == 'N/A' or la == 'N/A':
-                    return f"❌ no (Goals: {target_goals}-{other_goals} - Invalid last rank format)"
-            except:
-                 return f"❌ no (Goals: {target_goals}-{other_goals} - Invalid last rank format)"
-            
-            # 5. تطبيق قواعد الاستبعاد الصارمة (Forbidden Groups)
-            if target_is_home:
-                current_pair = (ch, ca)
-                last_pair = (lh, la)
-            else:
-                current_pair = (ca, ch)
-                last_pair = (la, lh)
-
-            for group in forbidden_groups:
-                if current_pair in group['current_rank_1']:
-                    if last_pair in group['last_rank_2']:
-                        target_name = match_data['home_team'] if target_is_home else match_data['away_team']
-                        return f"❌ no (Forbidden: {target_name} with {target_goals} goals vs {other_goals}, Current: {current_pair}, Last: {last_pair})"
-            
-            # 6. قاعدة الترتيب (شرط التوافق)
-            target_current_rank = ch if target_is_home else ca
-            other_current_rank = ca if target_is_home else ch
-            
-            target_last_rank = lh if target_is_home else la
-            other_last_rank = la if target_is_home else lh
-
-            # الشرط السابع: الفريق الهدف يجب أن يكون ترتيبه الحالي أفضل من الفريق الآخر
-            if target_current_rank >= other_current_rank:
-                 return f"✅ yes (Goals: {target_goals}-{other_goals} - Target Rank {target_current_rank} is not better than Other Rank {other_current_rank})"
-            
-            # تم قبول المباراة بعد اجتياز جميع الشروط
-            return f"✅ yes (Goals: {target_goals}-{other_goals} | Target Rank: {target_current_rank} | Other Rank: {other_current_rank})"
-
-        except Exception as e:
-            print(f"ERROR in filter_condition_perfect_1_1: {e} for match {match_data.get('id')}")
-            return f"❌ no (Error in filter: {str(e)[:50]})"
-
-    def fetch_team_standings(self, team_id, league_id, season):
-        """جلب ترتيب الفريق مع استخدام الكاش"""
-        cache_key = f"standings_{team_id}_{league_id}_{season}"
-        
-        if cache_key in self.team_stats_cache:
-            return self.team_stats_cache[cache_key]
-        
-        standings = self.fetch_team_standings_improved(team_id, league_id, season)
-        self.team_stats_cache[cache_key] = standings
-        
-        # إدارة حجم الكاش
-        if len(self.team_stats_cache) > self.cache_max_size:
-            oldest_key = next(iter(self.team_stats_cache))
-            del self.team_stats_cache[oldest_key]
-        
-        return standings
-
-    def run_calendar_filter_process(self, matches):
-        if not self.calendar_filter_active:
-            return matches
-            
-        if self._is_calendar_filtering:
-            return matches
-        
-        self._is_calendar_filtering = True
-        
-        try:
-            filtered_matches = []
-            filter_results = {}
-            
-            # الحصول على الدوريات المختارة من قاعدة البيانات SQLite
-            selected_leagues = self.db.get_selected_leagues()
-            if not selected_leagues:
-                print("⚠️ No leagues selected in database, returning all matches")
-                self._is_calendar_filtering = False
-                return matches
-            
-            selected_league_ids = {str(league['id']) for league in selected_leagues}
-            print(f"📊 Selected leagues for filtering: {len(selected_league_ids)} leagues")
-            
-            if self.calendar_filter_type == 'perfect_1_1':
-                filter_func = self.filter_condition_perfect_1_1
-            else:
-                filter_func = self.filter_condition_perfect_1_1
-            
-            print(f"🔍 Applying calendar filter '{self.calendar_filter_type}' to {len(matches)} matches")
-            
-            for match in matches:
-                match_id = match.get('id')
-                league_id = str(match.get('league_id', ''))
-                
-                if league_id not in selected_league_ids:
-                    continue
-                
-                result = filter_func(match)
-                filter_results[match_id] = result
-                
-                if "✅ yes" in result:
-                    filtered_matches.append(match)
-            
-            print(f"✅ Filtered matches: {len(filtered_matches)} out of {len(matches)} (from selected leagues only)")
-            
-            self.calendar_filtered_matches = filtered_matches
-            self.calendar_filter_results = filter_results
-            self._is_calendar_filtering = False
-            
-            return filtered_matches
-            
-        except Exception as e:
-            print(f"❌ Error in calendar filter process: {e}")
-            self._is_calendar_filtering = False
-            return matches
-
-    def get_selected_leagues(self):
-        """الحصول على الدوريات المختارة من قاعدة البيانات SQLite"""
-        try:
-            # استخدام قاعدة البيانات SQLite بدلاً من connection القديم
-            return self.db.get_selected_leagues()
-        except Exception as e:
-            print(f"❌ Error getting selected leagues: {e}")
-            return []
-
-    def save_calendar_filter_state(self):
-        try:
-            selected_leagues = self.get_selected_leagues()
-            
-            filter_state = {
-                'active': self.calendar_filter_active,
-                'type': self.calendar_filter_type,
-                'selected_leagues_count': len(selected_leagues),
-                'last_updated': datetime.now().isoformat()
-            }
-            
-            filter_file = os.path.join(self.calendar_filter_dir, 'filter_state.json')
-            with open(filter_file, 'w', encoding='utf-8') as f:
-                json.dump(filter_state, f, indent=2)
-                
-            print(f"💾 Saved filter state: {len(selected_leagues)} selected leagues")
-                
-        except Exception as e:
-            print(f"❌ Error saving filter state: {e}")
-
-    def load_calendar_filter_state(self):
-        try:
-            filter_file = os.path.join(self.calendar_filter_dir, 'filter_state.json')
-            if os.path.exists(filter_file):
-                with open(filter_file, 'r', encoding='utf-8') as f:
-                    filter_state = json.load(f)
-                
-                self.calendar_filter_active = filter_state.get('active', False)
-                self.calendar_filter_type = filter_state.get('type', 'perfect_1_1')
-                
-                selected_count = filter_state.get('selected_leagues_count', 0)
-                print(f"📅 Loaded calendar filter: Active={self.calendar_filter_active}, Type={self.calendar_filter_type}, Selected leagues={selected_count}")
-                
-        except Exception as e:
-            print(f"❌ Error loading filter state: {e}")
-            self.calendar_filter_active = False
-            self.calendar_filter_type = 'perfect_1_1'
-
-    def toggle_calendar_filter(self):
-        self.calendar_filter_active = not self.calendar_filter_active
-        
-        # حفظ حالة الفلتر
-        self.save_calendar_filter_state()
-        
-        status = "ACTIVATED" if self.calendar_filter_active else "DEACTIVATED"
-        filter_type_display = self.calendar_filter_type.replace('_', ' ').title()
-        
-        self.show_snackbar(f"📅 Calendar Filter {status} ({filter_type_display})")
-        
-        # إذا كنا في وضع التقويم، نعيد تحميل المباريات مباشرة
-        if self.calendar_mode and self.current_calendar_date:
-            Clock.schedule_once(lambda dt: self.show_calendar_matches(self.current_calendar_date), 0.2)
-        
-        # تحديث واجهة البروفايل إذا كنا فيها
-        if self.current_tab == 'profile':
-            Clock.schedule_once(lambda dt: self.show_profile(), 0.3)
-
-    def set_calendar_filter_type(self, filter_type):
-        """تعيين نوع فلتر التقويم مع التحقق من الصحة"""
-        valid_filters = ['perfect_1_1']
-        if filter_type not in valid_filters:
-            self.show_snackbar(f"❌ Invalid filter type: {filter_type}")
-            return
-            
-        self.calendar_filter_type = filter_type
-        self.save_calendar_filter_state()
-        
-        filter_type_display = filter_type.replace('_', ' ').title()
-        self.show_snackbar(f"📅 Calendar filter type set to: {filter_type_display}")
-        
-        # إذا كان الفلتر نشطاً، نقوم بتحديث العرض
-        if self.calendar_filter_active and self.calendar_mode:
-            self.show_snackbar("🔄 Applying new filter type...")
-            self.show_calendar_matches(self.current_calendar_date)
-
-    # ===========================================
-    # END OF CALENDAR FILTER FUNCTIONS
-    # ===========================================
+    def is_league_selected(self, league_id):
+        return any(l.get('id') == league_id for l in self.selected_leagues)
 
     def fetch_leagues(self):
         try:
@@ -2621,6 +2150,9 @@ class ProfessionalFootballApp(MDApp):
                 if data.get('response'):
                     matches = self.process_api_response_improved(data['response'])
                     live_matches = [match for match in matches if match.get('status') in ['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE']]
+
+                    live_matches = self.filter_out_hidden_matches_immediately(live_matches)
+                    
                     return live_matches
                 else:
                     return []
@@ -2658,12 +2190,70 @@ class ProfessionalFootballApp(MDApp):
                 if data.get('response'):
                     matches = self.process_api_response_improved(data['response'])
                     live_matches = [match for match in matches if match.get('status') in ['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE']]
+
+                    live_matches = self.filter_out_hidden_matches_immediately(live_matches)
+                    
                     return live_matches
             return []
                 
         except Exception:
             return []
 
+    @mainthread
+    def update_matches_data(self, new_matches):
+        hidden_ids = {m.get('id') for m in self.hidden_matches}
+
+        filtered_new_matches = [
+            match for match in new_matches 
+            if match.get('id') not in hidden_ids
+        ]
+        
+        print(f"🔄 تحديث البيانات: {len(new_matches)} مباراة جديدة، {len(new_matches) - len(filtered_new_matches)} مخفية")
+        
+        new_matches_dict = {m.get('id'): m for m in filtered_new_matches}
+        
+        updated_self_matches = []
+        should_refresh_ui = False
+        
+        for old_match in self.matches:
+            match_id = old_match.get('id')
+
+            if match_id in hidden_ids:
+                continue
+                
+            new_match = new_matches_dict.pop(match_id, None)
+            
+            if new_match:
+                old_status = old_match.get('status')
+                new_status = new_match.get('status')
+                
+                old_match.update(new_match)
+                self.find_and_update_match_widget(old_match)
+                
+                updated_self_matches.append(old_match)
+                
+                if old_status in ['1H', '2H', 'HT', 'LIVE'] and new_status in ['FT', 'AET', 'PEN']:
+                    should_refresh_ui = True
+            else:
+                updated_self_matches.append(old_match)
+
+        for new_match_id, new_match in new_matches_dict.items():
+            if new_match_id not in hidden_ids:
+                updated_self_matches.append(new_match)
+                should_refresh_ui = True
+        
+        self.matches = updated_self_matches
+        self.today_matches = [m for m in self.matches if self._is_today(m.get('time'))]
+
+        if should_refresh_ui and self.current_tab == 'live' and not self.calendar_mode:
+            if self.current_filter != "No Filter":
+                 self.run_filter_process_threaded() 
+            else:
+                 self.show_live_matches()
+        
+        self.root.ids.topbar.right_action_items[0][0] = 'update'
+        Clock.schedule_once(lambda dt: self._reset_update_icon(), 2)
+        
     def _reset_update_icon(self):
         self.root.ids.topbar.right_action_items[0][0] = 'autorenew'
 
@@ -2937,14 +2527,16 @@ class ProfessionalFootballApp(MDApp):
     @mainthread
     def update_ui_with_matches(self, matches):
         try:
-            self.matches = matches
-            self.today_matches = [m for m in matches if self._is_today(m.get('time'))]
+            filtered_matches = self.filter_out_hidden_and_favorite_matches(matches)
+            
+            self.matches = filtered_matches
+            self.today_matches = [m for m in filtered_matches if self._is_today(m.get('time'))]
             self.api_available = True
             
             if self.current_tab == 'live' and not self.calendar_mode:
                 pass 
                     
-            self.show_snackbar(f"Loaded {len(matches)} live matches")
+            self.show_snackbar(f"Loaded {len(filtered_matches)} live matches")
             
         except Exception:
             pass
@@ -2985,6 +2577,7 @@ class ProfessionalFootballApp(MDApp):
             theme_text_color='Secondary'
         )
         container.add_widget(empty_item)
+
     def organize_live_matches_by_minute(self, live_matches):
         if not live_matches:
             return []
@@ -3019,7 +2612,7 @@ class ProfessionalFootballApp(MDApp):
                 minute_group = 'PEN'
             else:
                 minute_group = 'OTHER'
-            
+        
             if minute_group not in matches_by_minute:
                 matches_by_minute[minute_group] = []
             matches_by_minute[minute_group].append(match)
@@ -3064,7 +2657,8 @@ class ProfessionalFootballApp(MDApp):
         else:
             filtered_live_matches = live_matches
 
-        final_matches_to_show = self.get_matches_without_favorites_and_hidden(filtered_live_matches)
+        final_matches_to_show = self.filter_out_hidden_and_favorite_matches(filtered_live_matches)
+        print(f"📊 Live Matches: {len(live_matches)} -> {len(filtered_live_matches)} بعد فلترة الدوريات -> {len(final_matches_to_show)} بعد الإخفاء النهائي")
         
         organized_live_matches = self.organize_live_matches_by_minute(final_matches_to_show)
 
@@ -3127,7 +2721,9 @@ class ProfessionalFootballApp(MDApp):
         container.clear_widgets()
         
         all_available_matches = list({m['id']: m for m in self.matches + self.today_matches}.values())
-        fav_matches_data = [m for m in all_available_matches if self.is_favorite(m.get('id'))]
+
+        fav_matches_data = [m for m in all_available_matches 
+                           if self.is_favorite(m.get('id')) and not self.is_hidden(m.get('id'))]
         
         fav_leagues_data = self.favorite_leagues
         
@@ -3288,7 +2884,7 @@ class ProfessionalFootballApp(MDApp):
                 newly_selected_leagues_data.append(league_data)
             else:
                 deselected_leagues_ids.append(item.league_id)
-        
+
         current_selected = [l for l in self.selected_leagues if l['id'] not in deselected_leagues_ids]
         
         current_ids = {l['id'] for l in current_selected}
@@ -3298,11 +2894,7 @@ class ProfessionalFootballApp(MDApp):
                 current_selected.append(league)
                 
         self.selected_leagues = current_selected
-        
-        # حفظ في قاعدة البيانات
-        for league in current_selected:
-            self.db.add_selected_league(league['id'], league['name'], league)
-
+        self.save_league_selection()  
         message = f"✅ Supreme update successful: {len(self.selected_leagues)} leagues kept. (Removed: {len(deselected_leagues_ids)})"
         self.show_dialog(message)
         
@@ -3343,67 +2935,11 @@ class ProfessionalFootballApp(MDApp):
         
         container.add_widget(stats_box)
         
-        # ===========================================
-        # CALENDAR FILTER CONTROL SECTION - ADDED
-        # ===========================================
-        calendar_filter_header = OneLineListItem(text="📅 CALENDAR FILTER SYSTEM (NS Matches Only)")
-        calendar_filter_header.md_bg_color = get_color_from_hex("#E1F5FE")
-        container.add_widget(calendar_filter_header)
-
-        calendar_filter_box = MDBoxLayout(orientation='vertical', spacing=dp(10), size_hint_y=None, height=dp(150))
-
-        # حالة الفلتر الحالية
-        filter_status = "✅ ACTIVE" if self.calendar_filter_active else "❌ INACTIVE"
-        filter_status_color = "#4CAF50" if self.calendar_filter_active else "#F44336"
-        filter_type_display = self.calendar_filter_type.replace('_', ' ').title()
-
-        status_label = MDBoxLayout(
-            orientation='vertical',
-            spacing=dp(2),
-            size_hint_y=None,
-            height=dp(40)
-        )
-
-        status_label.add_widget(MDLabel(
-            text=f"Calendar Filter: {filter_status}",
-            theme_text_color='Custom',
-            text_color=get_color_from_hex(filter_status_color),
-            halign='center',
-            bold=True
-        ))
-
-        status_label.add_widget(MDLabel(
-            text=f"Type: {filter_type_display}",
-            theme_text_color='Secondary',
-            halign='center',
-            font_style='Caption'
-        ))
-
-        calendar_filter_box.add_widget(status_label)
-
-        # أزرار التحكم
-        btn_calendar_row = MDBoxLayout(orientation='horizontal', spacing=dp(10), size_hint_y=None, height=dp(40))
-
-        btn_toggle_calendar = MDRaisedButton(
-            text="✅ Activate" if not self.calendar_filter_active else "❌ Deactivate",
-            on_release=lambda x: self.toggle_calendar_filter(),
-            size_hint_x=0.5,
-            md_bg_color=get_color_from_hex("#4CAF50" if not self.calendar_filter_active else "#F44336")
-        )
-
-        btn_calendar_row.add_widget(btn_toggle_calendar)
-        calendar_filter_box.add_widget(btn_calendar_row)
-
-        container.add_widget(calendar_filter_box)
-        # ===========================================
-        # END OF CALENDAR FILTER SECTION
-        # ===========================================
-        
         filter_header = OneLineListItem(text="🎯 ADVANCED FILTER SYSTEM")
         filter_header.md_bg_color = get_color_from_hex("#E1F5FE")
         container.add_widget(filter_header)
         
-        filter_buttons_box = MDBoxLayout(orientation='vertical', spacing=dp(10), size_hint_y=None, height=dp(200))
+        filter_buttons_box = MDBoxLayout(orientation='vertical', spacing=dp(10), size_hint_y=None, height=dp(250))
         
         btn_condition1 = MDRaisedButton(
             text="🔍 Condition 1: One Team Scored/No Goals",
@@ -3429,6 +2965,31 @@ class ProfessionalFootballApp(MDApp):
             md_bg_color=get_color_from_hex("#00A0B0")
         )
         filter_buttons_box.add_widget(btn_combined_1_2)
+
+        btn_ns_filter = MDBoxLayout(
+            orientation='horizontal',
+            size_hint_y=None,
+            height=dp(40),
+            padding=dp(5),
+            spacing=dp(10)
+        )
+        btn_ns_filter_label = MDLabel(
+            text="📅 NS Filter (Perfect 1_1) for Calendar",
+            theme_text_color='Primary',
+            halign='left',
+            valign='center',
+            size_hint_x=0.8
+        )
+        btn_ns_filter_icon = MDIconButton(
+            icon= "checkbox-marked" if self.filter_ns_perfect_1_1_enabled else "checkbox-blank-outline",
+            theme_text_color='Custom',
+            text_color=get_color_from_hex("#4CAF50") if self.filter_ns_perfect_1_1_enabled else get_color_from_hex("#F44336"),
+            on_release=lambda x: self.toggle_filter_ns_perfect_1_1(),
+            size_hint_x=0.2
+        )
+        btn_ns_filter.add_widget(btn_ns_filter_label)
+        btn_ns_filter.add_widget(btn_ns_filter_icon)
+        filter_buttons_box.add_widget(btn_ns_filter)
         
         btn_reset = MDFlatButton(
             text="🔄 Reset Filter",
@@ -3484,6 +3045,18 @@ class ProfessionalFootballApp(MDApp):
             container.add_widget(clear_btn)
         else:
             self.show_empty_message("No hidden matches")
+
+    def clear_all_hidden_matches(self):
+        if self.hidden_matches:
+            self.hidden_matches = []
+            self.save_hidden_matches()  # هذا مهم لحفظ التغيير في قاعدة البيانات
+            self.show_snackbar("All hidden matches cleared permanently")
+            
+            # تحديث الواجهة
+            if self.current_tab == 'profile':
+                self.show_hidden_matches()
+        else:
+            self.show_snackbar("No hidden matches to clear")
 
     def fetch_leagues_threaded(self, keyword=""):
         t = threading.Thread(target=self.fetch_leagues_api, args=(keyword,))
@@ -3571,10 +3144,7 @@ class ProfessionalFootballApp(MDApp):
             final_list = list(merged.values())
 
             self.selected_leagues = final_list
-            
-            # حفظ في قاعدة البيانات
-            for league in selected:
-                self.db.add_selected_league(league['id'], league['name'], league)
+            self.save_league_selection()
 
             message = f"✅ {len(selected)} new leagues added! (Total: {len(final_list)})"
         else:
@@ -3650,7 +3220,6 @@ class ProfessionalFootballApp(MDApp):
         return "❌ no"
 
     def filter_condition_1(self, match_data):
-
         try:
             home_score = match_data.get('home_score', 0)
             away_score = match_data.get('away_score', 0)
@@ -3674,7 +3243,6 @@ class ProfessionalFootballApp(MDApp):
             return "❌ no"
 
     def extract_goals_for_and_against(self, stats_str):
-
         try:
             parts = stats_str.split(":")
             if len(parts) == 3:
@@ -3686,7 +3254,6 @@ class ProfessionalFootballApp(MDApp):
             return 0, 0
 
     def filter_condition_2(self, match_data):
-
         try:
             home_team_id = match_data.get('home_team_id')
             away_team_id = match_data.get('away_team_id')
@@ -3695,6 +3262,7 @@ class ProfessionalFootballApp(MDApp):
             home_score = match_data.get('home_score', 0)
             away_score = match_data.get('away_score', 0)
             status = match_data.get('status', 'NS')
+            
             # ------------------------------------------------------------------
 
             if status in ['FT', 'AET', 'PEN']:
@@ -3738,11 +3306,11 @@ class ProfessionalFootballApp(MDApp):
                 losing_is_home = False
             
 
-            losing_stats_str = self.fetch_team_last_matches(
+            losing_stats_str = self.fetch_team_last_matches_improved(
                 losing_team_id, league_id, season, losing_is_home
             )
             
-            winning_stats_str = self.fetch_team_last_matches(
+            winning_stats_str = self.fetch_team_last_matches_improved(
                 winning_team_id, league_id, season, not losing_is_home
             )
             
@@ -3755,7 +3323,7 @@ class ProfessionalFootballApp(MDApp):
                 return "❌ no (الخاسر استقبل أكثر من 7 أهداف)"
             
 
-            if (losing_goals_against - winning_goals_against) > 4:
+            if (losing_goals_against - winning_goals_against) > 2:
                     return "❌ no (الخاسر استقبل عدد أهداف مرتفع)"
 
                                                 # ============================================================
@@ -3770,7 +3338,6 @@ class ProfessionalFootballApp(MDApp):
             return "❌ no"
 
     def combined_filter_condition(self, match_data):
-
         condition1_result = self.filter_condition_1(match_data)
         condition2_result = self.filter_condition_2(match_data)
         
@@ -3780,7 +3347,6 @@ class ProfessionalFootballApp(MDApp):
         return "❌ no"
         
     def filter_condition_combined_1_and_2(self, match_data):
-
         condition1_result = self.filter_condition_1(match_data)
         if condition1_result != "✅ yes":
             return "❌ no"
@@ -3851,17 +3417,15 @@ class ProfessionalFootballApp(MDApp):
                         match for match in relevant_matches
                         if match.get('league_id') in required_league_ids
                     ]
-                
-                # الحصول على IDs المخفية من الكاش
-                hidden_ids = self.get_hidden_match_ids()
+
+                hidden_ids = {m.get('id') for m in self.hidden_matches}
+                relevant_matches = [
+                    match for match in relevant_matches 
+                    if match.get('id') not in hidden_ids
+                ]
                 
                 for match in relevant_matches:
-                    match_id = str(match.get('id'))
-                    
-                    # استبعاد المباريات المخفية
-                    if match_id in hidden_ids:
-                        continue
-                    
+                    match_id = match.get('id')
                     result = self.apply_filter_condition(match)
                     filter_results[match_id] = result
                     
@@ -3897,8 +3461,12 @@ class ProfessionalFootballApp(MDApp):
         if self._is_filtering:
             self.show_loading("Applying filter...")
             return
-            
-        final_filtered_matches = self.get_matches_without_favorites_and_hidden(self.filtered_matches)
+
+        hidden_ids = {m.get('id') for m in self.hidden_matches}
+        final_filtered_matches = [
+            match for match in self.filtered_matches 
+            if match.get('id') not in hidden_ids
+        ]
             
         if final_filtered_matches:
             filter_info = MDLabel(
