@@ -23,7 +23,7 @@ version = 0.5
 android.version_code = 5
 
 # (list) Application requirements
-requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests,certifi,urllib3,chardet,idna
+requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests,certifi,urllib3,chardet,idna,sqlite3
 
 # (str) Presplash of the application (اختياري)
 #presplash.filename = data/presplash.png
@@ -77,13 +77,13 @@ fullscreen = 0
 
 # (list) Permissions
 # (See https://python-for-android.readthedocs.io/en/latest/buildoptions/#build-options-1 for all the supported syntaxes and properties)
-android.permissions = android.permission.INTERNET, (name=android.permission.WRITE_EXTERNAL_STORAGE;maxSdkVersion=18)
+android.permissions = android.permission.INTERNET, android.permission.WRITE_EXTERNAL_STORAGE, android.permission.READ_EXTERNAL_STORAGE
 
 # (list) features (adds uses-feature -tags to manifest)
 #android.features = android.hardware.usb.host
 
 # (int) Target Android API, should be as high as possible.
-#android.api = 31
+android.api = 33
 
 # (int) Minimum API your APK / AAB will support.
 #android.minapi = 21
@@ -252,7 +252,7 @@ android.permissions = android.permission.INTERNET, (name=android.permission.WRIT
 #android.uses_library =
 
 # (str) Android logcat filters to use
-#android.logcat_filters = *:S python:D
+android.logcat_filters = *:S python:D
 
 # (bool) Android logcat only display log for activity's pid
 #android.logcat_pid_only = False
@@ -287,7 +287,7 @@ android.allow_backup = True
 # android.no-byte-compile-python = False
 
 # (str) The format used to package the app for release mode (aab or apk or aar).
-# android.release_artifact = aab
+android.release_artifact = apk
 
 # (str) The format used to package the app for debug mode (apk or aar).
 # android.debug_artifact = apk
@@ -431,7 +431,6 @@ warn_on_root = 1
 #
 #    Then, invoke the command line with the "demo" profile:
 #
-#buildozer --profile demo android debug
 #buildozer --profile demo android debug
 # إعدادات التوقيع
 android.signing.keyalias = chaib11100  # الاسم المستعار للمفتاح
