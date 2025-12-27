@@ -156,6 +156,26 @@ class SQLiteStorage:
                 )
             """)
 
+            # جدول كاش Perfect2_2 مع إضافة الأهداف المستقبلة
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS perfect2_2_cache (
+                    match_id INTEGER PRIMARY KEY,
+                    home_team_id INTEGER,
+                    away_team_id INTEGER,
+                    league_id INTEGER,
+                    home_goals_last3 INTEGER DEFAULT 0,
+                    home_goals_against_last3 INTEGER DEFAULT 0,
+                    away_goals_last3 INTEGER DEFAULT 0,
+                    away_goals_against_last3 INTEGER DEFAULT 0,
+                    home_rank_current INTEGER,
+                    home_rank_last INTEGER,
+                    away_rank_current INTEGER,
+                    away_rank_last INTEGER,
+                    stored_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    expires_at DATETIME
+                )
+            """)
+
             conn.commit()
             conn.close()
             print("✅ Database initialized")
@@ -314,6 +334,87 @@ class SQLiteStorage:
         
         conn.commit()
         conn.close()
+    
+    # دوال كاش Perfect2_2
+    def load_perfect2_2_cache(self):
+        """تحميل كاش Perfect2_2 من قاعدة البيانات"""
+        cache = {}
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT * FROM perfect2_2_cache')
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                match_id = row[0]
+                cache[match_id] = {
+                    'home_team_id': row[1],
+                    'away_team_id': row[2],
+                    'league_id': row[3],
+                    'home_goals_last3': row[4],
+                    'home_goals_against_last3': row[5],
+                    'away_goals_last3': row[6],
+                    'away_goals_against_last3': row[7],
+                    'home_rank_current': row[8],
+                    'home_rank_last': row[9],
+                    'away_rank_current': row[10],
+                    'away_rank_last': row[11],
+                    'stored_time': row[12],
+                    'expires_at': row[13]
+                }
+            
+            conn.close()
+            print(f"✅ تم تحميل {len(rows)} سجل من كاش Perfect2_2")
+            
+        except Exception as e:
+            print(f"❌ خطأ في تحميل كاش Perfect2_2: {e}")
+        
+        return cache
+    
+    def save_perfect2_2_cache(self, cache):
+        """حفظ كاش Perfect2_2 في قاعدة البيانات"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # مسح القديم
+            cursor.execute('DELETE FROM perfect2_2_cache')
+            
+            # إضافة الجديد
+            for match_id, data in cache.items():
+                cursor.execute('''
+                    INSERT INTO perfect2_2_cache 
+                    (match_id, home_team_id, away_team_id, league_id, 
+                     home_goals_last3, home_goals_against_last3,
+                     away_goals_last3, away_goals_against_last3,
+                     home_rank_current, home_rank_last,
+                     away_rank_current, away_rank_last,
+                     stored_time, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    match_id,
+                    data.get('home_team_id'),
+                    data.get('away_team_id'),
+                    data.get('league_id'),
+                    data.get('home_goals_last3', 0),
+                    data.get('home_goals_against_last3', 0),
+                    data.get('away_goals_last3', 0),
+                    data.get('away_goals_against_last3', 0),
+                    data.get('home_rank_current'),
+                    data.get('home_rank_last'),
+                    data.get('away_rank_current'),
+                    data.get('away_rank_last'),
+                    data.get('stored_time', datetime.now().isoformat()),
+                    data.get('expires_at')
+                ))
+            
+            conn.commit()
+            conn.close()
+            print(f"✅ تم حفظ {len(cache)} سجل في كاش Perfect2_2")
+            
+        except Exception as e:
+            print(f"❌ خطأ في حفظ كاش Perfect2_2: {e}")
 
 
 class CalendarHeader(MDBoxLayout):
@@ -386,6 +487,10 @@ class StatsPopup(MDFloatLayout):
     
     first_last_rank_color = StringProperty("#AAAAAA")
     second_last_rank_color = StringProperty("#AAAAAA")
+    
+    # خصائص جديدة لعرض بيانات الكاش
+    from_cache = BooleanProperty(False)
+    cache_data = DictProperty({})
     
     def copy_team_rank_info(self, team_type, copy_type="current"):
         try:
@@ -666,9 +771,9 @@ KV = '''
         pos_hint: {'center_x': 0.5, 'center_y': 0.5}
         
         MDLabel:
-            text: ""
+            text: "From Cache" if root.from_cache else "Live Stats"
             theme_text_color: 'Custom'
-            text_color: get_color_from_hex("#FFFFFF")
+            text_color: get_color_from_hex("#4CAF50") if root.from_cache else get_color_from_hex("#2196F3")
             font_style: 'Caption'
             halign: 'center'
             bold: True
@@ -785,7 +890,7 @@ KV = '''
                     MDLabel:
                         text: root.second_team_goals_for
                         theme_text_color: 'Custom'
-                        text_color: get_color_from_hex("#00FF00") if root.second_team_color == 'green' else (get_color_from_hex("#2196F3") if root.second_team_color == 'blue' else (get_color_from_hex("#FF0000") if root.second_team_color == 'red'else get_color_from_hex("#FFFFFF")))
+                        text_color: get_color_from_hex("#00FF00") if root.second_team_color == 'green' else (get_color_from_hex("#2196F3") if root.second_team_color == 'blue' else (get_color_from_hex("#FF0000") if root.second_team_color == 'red' else get_color_from_hex("#FFFFFF")))
                         font_size: "21sp"
                         halign: 'center'
                         bold: True
@@ -1221,6 +1326,8 @@ class ProfessionalFootballApp(MDApp):
     calendar_mode = BooleanProperty(False)
     
     filter_ns_perfect_1_1_enabled = BooleanProperty(False)  
+    filter_perfect2_2_enabled = BooleanProperty(False)
+    perfect2_2_cache = DictProperty({})
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1249,7 +1356,9 @@ class ProfessionalFootballApp(MDApp):
 
         self.team_stats_cache = {}
         self.team_standings_cache = {}
-        self.cache_timeout = 300  
+        self.cache_timeout = 300
+        
+        self.perfect2_2_cache = {}
     
     def build(self):
         self.theme_cls.primary_palette = 'Blue'
@@ -1266,6 +1375,9 @@ class ProfessionalFootballApp(MDApp):
         self.load_favorite_leagues()
 
         self.load_filter_state()
+        
+        # تحميل كاش Perfect2_2
+        self.perfect2_2_cache = self.storage.load_perfect2_2_cache()
         
         Clock.schedule_once(lambda dt: self.load_leagues_and_matches(), 0.5)
         
@@ -1285,7 +1397,13 @@ class ProfessionalFootballApp(MDApp):
         self.save_favorite_leagues()
         self.save_league_selection()        
         self.save_filter_state()        
+        self.save_perfect2_2_cache()
+        
         super().on_stop()
+    
+    def save_perfect2_2_cache(self):
+        """حفظ كاش Perfect2_2"""
+        self.storage.save_perfect2_2_cache(self.perfect2_2_cache)
 
     def filter_out_hidden_matches_immediately(self, matches_list):
         if not matches_list:
@@ -1338,74 +1456,57 @@ class ProfessionalFootballApp(MDApp):
 
     def load_filter_state(self):
         self.filter_ns_perfect_1_1_enabled = self.storage.load_filter_state('filter_ns_perfect_1_1_enabled')
+        self.filter_perfect2_2_enabled = self.storage.load_filter_state('filter_perfect2_2_enabled')
             
     def save_filter_state(self):
         self.storage.save_filter_state('filter_ns_perfect_1_1_enabled', self.filter_ns_perfect_1_1_enabled)
+        self.storage.save_filter_state('filter_perfect2_2_enabled', self.filter_perfect2_2_enabled)
 
     def filter_ns_perfect_1_1(self, match_data):
         try:
-            home_team_id = match_data.get('home_team_id')
-            away_team_id = match_data.get('away_team_id')
+            # 1. استخراج البيانات الأساسية بأسماء واضحة
+            home_id = match_data.get('home_team_id')
+            away_id = match_data.get('away_team_id')
             league_id = match_data.get('league_id')
             season = match_data.get('season', datetime.now().year)
-            status = match_data.get('status', 'NS')
-
-            if status not in ['NS', 'TBD']:
+            
+            if match_data.get('status', 'NS') not in ['NS', 'TBD']:
                 return "❌ no (Match already started)"
-
-            if not all([home_team_id, away_team_id, league_id]):
+            if not all([home_id, away_id, league_id]):
                 return "❌ no (Missing team/league data)"
 
-            home_total_goals, home_count = self.fetch_team_last_goals_for_filter(
-                home_team_id, league_id, season, is_home_team=True, matches_count=3
-            )
-            
-            away_total_goals, away_count = self.fetch_team_last_goals_for_filter(
-                away_team_id, league_id, season, is_home_team=False, matches_count=3
-            )
+            # 2. جلب الأهداف
+            home_goals, home_count = self.fetch_team_last_goals_for_filter(home_id, league_id, season, True, 3)
+            away_goals, away_count = self.fetch_team_last_goals_for_filter(away_id, league_id, season, False, 3)
 
             if home_count < 3 or away_count < 3:
                 return f"❌ no (Not enough matches: H:{home_count}, A:{away_count})"
 
-            if home_total_goals == away_total_goals:
-                return f"✅ yes (Equal goals: {home_total_goals}-{away_total_goals})"
-                
-            if home_total_goals > away_total_goals:
-                winner_id = home_team_id
-                winner_label = "Home"
-                winner_goals = home_total_goals
-                
-                loser_id = away_team_id
-                loser_label = "Away"
-                loser_goals = away_total_goals
+            # 3. حالة التعادل
+            if home_goals == away_goals:
+                return f"✅ yes (Equal goals: {home_goals}-{away_goals})"
+
+            # 4. تحديد الفائز والخاسر (المنطق الموحد)
+            if home_goals > away_goals:
+                winner_id, loser_id = home_id, away_id
+                winner_label, loser_label = "Home", "Away"
+                winner_goals, loser_goals = home_goals, away_goals
             else:
-                winner_id = away_team_id
-                winner_label = "Away"
-                winner_goals = away_total_goals
-                
-                loser_id = home_team_id
-                loser_label = "Home"
-                loser_goals = home_total_goals
+                winner_id, loser_id = away_id, home_id
+                winner_label, loser_label = "Away", "Home"
+                winner_goals, loser_goals = away_goals, home_goals
 
-            winner_standings = self.fetch_team_standings_for_filter(winner_id, league_id, season)
-            loser_standings = self.fetch_team_standings_for_filter(loser_id, league_id, season)
+            # 5. جلب الترتيب باستخدام المعرفات الصحيحة
+            winner_stand = self.fetch_team_standings_for_filter(winner_id, league_id, season)
+            loser_stand = self.fetch_team_standings_for_filter(loser_id, league_id, season)
             
-            winner_rank = winner_standings.get('current_rank', 'N/A')
-            loser_rank = loser_standings.get('current_rank', 'N/A')
-
             try:
-                winner_rank_str = str(winner_rank).strip()
-                loser_rank_str = str(loser_rank).strip()
-
-                if not winner_rank_str.isdigit() or not loser_rank_str.isdigit():
-                    return f"❌ no (Invalid Rank Format: +:{winner_rank}, -:{loser_rank})"
-
-                winner_rank_int = int(winner_rank_str)
-                loser_rank_int = int(loser_rank_str)
-                
+                w_rank = int(str(winner_stand.get('current_rank')).strip())
+                l_rank = int(str(loser_stand.get('current_rank')).strip())
             except (ValueError, TypeError):
-                return f"❌ no (Rank Processing Error: +:{winner_rank}, -:{loser_rank})"
+                return "❌ no (Rank Processing Error)"
 
+            # 6. قائمة المحظورات (تكتب مرة واحدة فقط)
             forbidden_pairs = {
                 (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 10), (1, 11), (1, 12),
                 (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14),
@@ -1425,18 +1526,14 @@ class ProfessionalFootballApp(MDApp):
                 (16, 8), (16, 9), (16, 10), (16, 11), (16, 12), (16, 13), (16, 14), (16, 15),
                 (17, 15)
             }
-            current_pair = (winner_rank_int, loser_rank_int)
 
-            if current_pair in forbidden_pairs:
-                return f"❌ no (Forbidden Rank Pair: +{winner_rank_int} vs -{loser_rank_int})"
+            if (w_rank, l_rank) in forbidden_pairs:
+                return f"❌ no (Forbidden: +{w_rank} vs -{l_rank})"
 
-            goals_diff = winner_goals - loser_goals
-            
-            return f"✅ yes (+:{winner_label} {winner_goals} | -:{loser_label} {loser_goals} | [+]{winner_rank_int} vs [-]{loser_rank_int} | Diff: +{goals_diff})"
-                
+            return f"✅ yes (+:{winner_label} {winner_goals} | -:{loser_label} {loser_goals} | [{w_rank}] vs [{l_rank}])"
+
         except Exception as e:
-            print(f"NS Perfect 1_1 Filter Error: {e}")
-            return "❌ no (System Error)"
+            return f"❌ no (System Error: {e})"
 
     def fetch_team_last_goals_for_filter(self, team_id, league_id, season, is_home_team, matches_count=3):
         cache_key = f"goals_{team_id}_{league_id}_{season}_{'home' if is_home_team else 'away'}_last_{matches_count}"
@@ -1508,6 +1605,81 @@ class ProfessionalFootballApp(MDApp):
             self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
             return result
 
+    def fetch_team_last_goals_for_and_against(self, team_id, league_id, season, is_home_team, matches_count=3):
+        """جلب الأهداف المسجلة والمستقبلة في آخر 3 مباريات"""
+        cache_key = f"goals_for_against_{team_id}_{league_id}_{season}_{'home' if is_home_team else 'away'}_last_{matches_count}"
+        
+        if cache_key in self.team_stats_cache:
+            cached_data = self.team_stats_cache[cache_key]
+            cached_time = cached_data.get('time', 0)
+            if time.time() - cached_time < self.cache_timeout:
+                return cached_data['result']
+        
+        try:
+            url = f"{self.base_url}/fixtures"
+            params = {
+                'team': team_id,
+                'league': league_id,
+                'season': season,
+                'last': 15
+            }
+            
+            response = requests.get(url, headers=self.headers, params=params, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                matches = data.get('response', [])
+                
+                if not matches:
+                    result = (0, 0, 0)  # (goals_for, goals_against, matches_count)
+                    self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
+                    return result
+                
+                total_goals_for = 0
+                total_goals_against = 0
+                valid_matches = 0
+                
+                for match in matches:
+                    if valid_matches >= matches_count:
+                        break
+                        
+                    fixture = match.get('fixture', {})
+                    match_league = match.get('league', {})
+                    
+                    if (fixture.get('status', {}).get('short') == 'FT' and 
+                        match_league.get('id') == league_id):
+                        
+                        teams = match.get('teams', {})
+                        goals = match.get('goals', {})
+
+                        is_current_team_home = teams.get('home', {}).get('id') == team_id
+                        
+                        if (is_home_team and is_current_team_home) or (not is_home_team and not is_current_team_home):
+                            if is_current_team_home:
+                                goals_for = goals.get('home', 0)
+                                goals_against = goals.get('away', 0)
+                            else:
+                                goals_for = goals.get('away', 0)
+                                goals_against = goals.get('home', 0)
+                            
+                            total_goals_for += goals_for
+                            total_goals_against += goals_against
+                            valid_matches += 1
+                
+                result = (total_goals_for, total_goals_against, valid_matches)
+                self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
+                return result
+                
+            result = (0, 0, 0)
+            self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
+            return result
+            
+        except Exception as e:
+            print(f"Error in fetch_team_last_goals_for_and_against for team {team_id}: {e}")
+            result = (0, 0, 0)
+            self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
+            return result
+
     def fetch_team_standings_for_filter(self, team_id, league_id, season):
         cache_key = f"standings_filter_{league_id}_{season}_{team_id}"
 
@@ -1554,6 +1726,285 @@ class ProfessionalFootballApp(MDApp):
             result = {'current_rank': 'N/A', 'points': 0, 'form': ''}
             self.team_standings_cache[cache_key] = {'result': result, 'time': time.time()}
             return result
+
+    # ========== فلترة Perfect2_2 ==========
+    
+    def filter_perfect2_2(self, match_data):
+        try:
+            # 1. استخراج البيانات الأساسية للمباراة فقط
+            match_id = match_data.get('id')
+            home_team_id = match_data.get('home_team_id')
+            away_team_id = match_data.get('away_team_id')
+            league_id = match_data.get('league_id')
+            season = match_data.get('season', datetime.now().year)
+            
+            print(f"🎯 Perfect2_2: Processing match {match_id}")
+            
+            # 2. التحقق من وجود البيانات الأساسية
+            if not all([match_id, home_team_id, away_team_id, league_id]):
+                return "❌ no (Missing basic match data)"
+            
+            # 3. جلب الأهداف المسجلة والمستقبلة في آخر 3 مباريات
+            home_goals_for, home_goals_against, home_count = self.fetch_team_last_goals_for_and_against(
+                home_team_id, league_id, season, is_home_team=True, matches_count=3
+            )
+            away_goals_for, away_goals_against, away_count = self.fetch_team_last_goals_for_and_against(
+                away_team_id, league_id, season, is_home_team=False, matches_count=3
+            )
+            
+            # 4. جلب الترتيب الحالي
+            home_rank_current = self.fetch_team_standings_for_filter(home_team_id, league_id, season)
+            away_rank_current = self.fetch_team_standings_for_filter(away_team_id, league_id, season)
+            
+            # 5. جلب ترتيب الموسم الماضي
+            home_rank_last = self._fetch_last_season_rank(home_team_id, season, league_id)
+            away_rank_last = self._fetch_last_season_rank(away_team_id, season, league_id)
+            
+            print(f"📊 Perfect2_2 Data - Home: {home_goals_for} goals scored, {home_goals_against} goals conceded, Rank: {home_rank_current.get('current_rank', 'N/A')}({home_rank_last})")
+            print(f"📊 Perfect2_2 Data - Away: {away_goals_for} goals scored, {away_goals_against} goals conceded, Rank: {away_rank_current.get('current_rank', 'N/A')}({away_rank_last})")
+            
+            # 6. تخزين البيانات في الكاش مع إضافة الأهداف المستقبلة
+            cache_data = {
+                'home_team_id': home_team_id,
+                'away_team_id': away_team_id,
+                'league_id': league_id,
+                'home_goals_last3': home_goals_for,          # الأهداف المسجلة
+                'home_goals_against_last3': home_goals_against,  # الأهداف المستقبلة
+                'away_goals_last3': away_goals_for,          # الأهداف المسجلة
+                'away_goals_against_last3': away_goals_against,  # الأهداف المستقبلة
+                'home_rank_current': home_rank_current.get('current_rank', 'N/A') if home_rank_current else 'N/A',
+                'home_rank_last': home_rank_last,
+                'away_rank_current': away_rank_current.get('current_rank', 'N/A') if away_rank_current else 'N/A',
+                'away_rank_last': away_rank_last,
+                'stored_time': datetime.now().isoformat(),
+                'expires_at': (datetime.now() + timedelta(days=1)).isoformat()
+            }
+            
+            # 7. إضافة إلى الكاش
+            self.add_to_perfect2_2_cache(match_id, cache_data)
+            
+            # 8. إرجاع "yes" - بكل بساطة
+            return f"✅ yes (Goals: H:{home_goals_for}({home_goals_against}) A:{away_goals_for}({away_goals_against}), Ranks: H:{cache_data['home_rank_current']}({home_rank_last}) A:{cache_data['away_rank_current']}({away_rank_last}))"
+            
+        except Exception as e:
+            print(f"❌ Error in filter_perfect2_2: {e}")
+            return f"❌ no (System error: {e})"
+    
+    def _fetch_last_season_rank(self, team_id, current_season, league_id=None):
+        """جلب ترتيب الفريق في الموسم الماضي"""
+        try:
+            last_season = current_season - 1
+            
+            if league_id:
+                # محاولة جلب ترتيب الموسم الماضي لنفس الدوري
+                standings = self._fetch_season_standings(team_id, league_id, last_season)
+                if standings and standings.get('current_rank') != 'N/A':
+                    return standings.get('current_rank')
+            
+            # إذا لم يتم العثور، البحث في جميع الدوريات
+            url = f"{self.base_url}/leagues"
+            params = {'team': team_id, 'season': last_season}
+            
+            response = requests.get(url, headers=self.headers, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('response'):
+                    for league_data in data['response']:
+                        league_info = league_data.get('league', {})
+                        found_league_id = league_info.get('id')
+                        
+                        standings = self._fetch_season_standings(team_id, found_league_id, last_season)
+                        if standings and standings.get('current_rank') != 'N/A':
+                            return standings.get('current_rank')
+            
+            return "N/A"
+        except Exception as e:
+            print(f"❌ Error fetching last season rank: {e}")
+            return "N/A"
+    
+    def _fetch_season_standings(self, team_id, league_id, season):
+        """دالة مساعدة لجلب ترتيب فريق في موسم معين"""
+        try:
+            url = f"{self.base_url}/standings"
+            params = {'league': league_id, 'season': season, 'team': team_id}
+            
+            response = requests.get(url, headers=self.headers, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get('response'):
+                    standings_data = data['response'][0]
+                    league_standings = standings_data.get('league', {}).get('standings', [])
+                    league_name = standings_data.get('league', {}).get('name', '')
+                    
+                    if league_standings and len(league_standings) > 0:
+                        for standing_group in league_standings:
+                            for team_standing in standing_group:
+                                if team_standing.get('team', {}).get('id') == team_id:
+                                    current_rank = team_standing.get('rank', 'N/A')
+                                    points = team_standing.get('points', 'N/A')
+                                    played = team_standing.get('all', {}).get('played', 'N/A')
+                                    
+                                    standings_info = {
+                                        'current_rank': str(current_rank),
+                                        'points': str(points),
+                                        'played': str(played),
+                                        'won': team_standing.get('all', {}).get('win'),
+                                        'draw': team_standing.get('all', {}).get('draw'),
+                                        'lost': team_standing.get('all', {}).get('lose'),
+                                        'season': season,
+                                        'league_name': league_name
+                                    }
+                                    
+                                    return standings_info
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error fetching season standings: {e}")
+            return None
+    
+    def get_from_perfect2_2_cache(self, match_id):
+        """الحصول على بيانات من الكاش"""
+        if match_id in self.perfect2_2_cache:
+            cache_data = self.perfect2_2_cache[match_id]
+            
+            # التحقق من الصلاحية (يوم واحد)
+            expires_at = cache_data.get('expires_at')
+            if expires_at:
+                try:
+                    expire_time = datetime.fromisoformat(expires_at)
+                    if datetime.now() > expire_time:
+                        # انتهت الصلاحية
+                        del self.perfect2_2_cache[match_id]
+                        return None
+                except:
+                    pass
+            
+            return cache_data
+        return None
+    
+    def add_to_perfect2_2_cache(self, match_id, data):
+
+        expires_at = (datetime.now() + timedelta(days=7)).isoformat()
+        
+        self.perfect2_2_cache[match_id] = {
+            **data,
+            'expires_at': expires_at,
+            'stored_time': datetime.now().isoformat()
+        }
+        
+        print(f"✅ تمت إضافة المباراة {match_id} إلى كاش Perfect2_2")
+        
+        # حفظ الكاش فوراً
+        self.save_perfect2_2_cache()
+    
+    def apply_perfect2_2_to_calendar(self, match_data):
+        """تطبيق الفلترة على مباريات التقويم"""
+        if not self.filter_perfect2_2_enabled:
+            return None
+        
+        return self.filter_perfect2_2(match_data)
+    
+    def toggle_filter_perfect2_2(self):
+        """تفعيل/تعطيل الفلترة"""
+        self.filter_perfect2_2_enabled = not self.filter_perfect2_2_enabled
+        self.save_filter_state()
+        
+        status = "✅ تم تفعيل" if self.filter_perfect2_2_enabled else "❌ تم تعطيل"
+        self.show_snackbar(f"{status} فلترة Perfect2_2")
+        
+        # إذا كنا في صفحة البروفايل، تحديث العرض
+        if self.current_tab == 'profile':
+            self.show_profile()
+    
+    def show_perfect2_2_cached_matches(self):
+        """عرض المباريات المخزنة في الكاش"""
+        container = self.root.ids.main_list
+        container.clear_widgets()
+        
+        if not self.perfect2_2_cache:
+            self.show_empty_message("No matches cached in Perfect2_2")
+            return
+        
+        header = OneLineListItem(text="📊 Perfect2_2 Cached Matches")
+        header.md_bg_color = get_color_from_hex("#4CAF50")
+        container.add_widget(header)
+        
+        count_label = MDLabel(
+            text=f"Total cached matches: {len(self.perfect2_2_cache)}",
+            font_style='Caption',
+            halign='center',
+            theme_text_color='Secondary',
+            size_hint_y=None,
+            height=dp(25)
+        )
+        container.add_widget(count_label)
+        
+        for match_id, cache_data in list(self.perfect2_2_cache.items()):
+            # إنشاء عرض مبسط للبيانات المخزنة
+            item_text = f"Match ID: {match_id}"
+            secondary_text = f"H: {cache_data.get('home_goals_last3')}({cache_data.get('home_goals_against_last3')}) goals, A: {cache_data.get('away_goals_last3')}({cache_data.get('away_goals_against_last3')}) goals"
+            
+            item = TwoLineListItem(
+                text=item_text,
+                secondary_text=secondary_text
+            )
+            
+            # زر للحذف من الكاش
+            delete_btn = MDIconButton(
+                icon='delete',
+                theme_text_color='Custom',
+                text_color=get_color_from_hex("#FF5252"),
+                on_release=lambda x, mid=match_id: self.delete_from_perfect2_2_cache(mid)
+            )
+            
+            item_box = BoxLayout(orientation='horizontal')
+            item_box.add_widget(item)
+            item_box.add_widget(delete_btn)
+            
+            container.add_widget(item_box)
+        
+        # زر لحذف الكاش بالكامل
+        clear_btn = MDRaisedButton(
+            text="🗑️ Clear All Cache",
+            md_bg_color=get_color_from_hex("#FF5252"),
+            on_release=lambda x: self.clear_perfect2_2_cache(),
+            pos_hint={'center_x': 0.5},
+            size_hint_x=0.8
+        )
+        container.add_widget(clear_btn)
+        
+        # زر للعودة
+        back_btn = MDRaisedButton(
+            text="⬅️ Back to Profile",
+            on_release=lambda x: self.show_profile(),
+            pos_hint={'center_x': 0.5},
+            size_hint_x=0.8
+        )
+        container.add_widget(back_btn)
+    
+    def delete_from_perfect2_2_cache(self, match_id):
+        """حذف مباراة من الكاش"""
+        if match_id in self.perfect2_2_cache:
+            del self.perfect2_2_cache[match_id]
+            self.save_perfect2_2_cache()
+            self.show_snackbar(f"✅ Deleted match {match_id} from cache")
+            
+            # تحديث العرض
+            if self.current_tab == 'profile':
+                self.show_perfect2_2_cached_matches()
+    
+    def clear_perfect2_2_cache(self):
+        """حذف الكاش بالكامل"""
+        self.perfect2_2_cache = {}
+        self.save_perfect2_2_cache()
+        self.show_snackbar("✅ Cleared all Perfect2_2 cache")
+        
+        if self.current_tab == 'profile':
+            self.show_perfect2_2_cached_matches()
 
     def load_favorites(self):
         self.favorites = self.storage.load_favorites()
@@ -1802,24 +2253,61 @@ class ProfessionalFootballApp(MDApp):
             else:
                 filtered_matches = matches
 
+            # تطبيق الفلترات بالتسلسل
             final_matches_filtered = []
+            
+            # أولاً: فلتر NS Perfect 1_1
             if self.filter_ns_perfect_1_1_enabled:
                 print(f"🎯 تطبيق فلتر NS Perfect 1_1 على {len(filtered_matches)} مباراة")
+                temp_filtered = []
                 for match in filtered_matches:
                     if match.get('status') == 'NS':  
                         filter_result = self.filter_ns_perfect_1_1(match)
                         if "✅ yes" in filter_result:  
-                            final_matches_filtered.append(match)
-                            print(f"✅ مباراة تمت تصفيتها: {match.get('home_team')} vs {match.get('away_team')}")
-                print(f"🎯 بعد تطبيق فلتر NS Perfect 1_1: {len(final_matches_filtered)} مباراة مجدولة")
-            else:
-                final_matches_filtered = filtered_matches
-                print(f"🎯 فلتر NS Perfect 1_1 غير مفعل، عرض جميع المباريات: {len(final_matches_filtered)}")
-
-            final_matches = self.filter_out_hidden_and_favorite_matches(final_matches_filtered)
-            print(f"🚫 النتيجة النهائية: {len(final_matches)} مباراة مجدولة (تم حذف {len(final_matches_filtered) - len(final_matches)} مباراة)")
+                            temp_filtered.append(match)
+                filtered_matches = temp_filtered
+                print(f"🎯 بعد تطبيق فلتر NS Perfect 1_1: {len(filtered_matches)} مباراة")
+            
+            # ثانياً: فلتر Perfect2_2 (للمباريات المنتهية فقط)
+            if self.filter_perfect2_2_enabled:
+                print(f"🎯 تطبيق فلتر Perfect2_2 على {len(filtered_matches)} مباراة")
+                temp_filtered = []
+                for match in filtered_matches:
+                    # Perfect2_2 تعمل فقط على المباريات المنتهية
+                    if match.get('status') == 'FT':
+                        filter_result = self.apply_perfect2_2_to_calendar(match)
+                        if filter_result and "✅ yes" in filter_result:
+                            temp_filtered.append(match)
+                            print(f"✅ Perfect2_2: {match.get('home_team')} vs {match.get('away_team')}")
+                    else:
+                        # المباريات غير المنتهية تمرر بدون فلترة Perfect2_2
+                        temp_filtered.append(match)
+                filtered_matches = temp_filtered
+                print(f"🎯 بعد تطبيق فلتر Perfect2_2: {len(filtered_matches)} مباراة")
+            
+            # إزالة المفضلة والمخفية
+            final_matches = self.filter_out_hidden_and_favorite_matches(filtered_matches)
+            print(f"🚫 النتيجة النهائية: {len(final_matches)} مباراة مجدولة")
             
             if final_matches:
+                # عرض معلومات الفلترات النشطة
+                filter_info = []
+                if self.filter_ns_perfect_1_1_enabled:
+                    filter_info.append("NS Perfect 1_1")
+                if self.filter_perfect2_2_enabled:
+                    filter_info.append("Perfect2_2")
+                
+                if filter_info:
+                    filter_label = MDLabel(
+                        text=f"Active filters: {' + '.join(filter_info)}",
+                        font_style='Caption',
+                        halign='center',
+                        theme_text_color='Secondary',
+                        size_hint_y=None,
+                        height=dp(20)
+                    )
+                    container.add_widget(filter_label)
+                
                 count_label = MDLabel(
                     text=f"Found {len(final_matches)} scheduled matches",
                     font_style='Caption',
@@ -1832,13 +2320,24 @@ class ProfessionalFootballApp(MDApp):
                 
                 for match in final_matches:
                     item = OptimizedCompactMatchItem(match_data=match)
+                    
+                    # إضافة مؤشر إذا كانت المباراة من فلتر Perfect2_2
+                    if self.filter_perfect2_2_enabled and match.get('status') == 'FT':
+                        # يمكنك إضافة أيقونة أو لون مميز هنا
+                        pass
+                    
                     container.add_widget(item)
             else:
                 no_matches_text = "No scheduled matches found"
                 if required_league_ids:
                     no_matches_text += " with current league filters"
+                filter_texts = []
                 if self.filter_ns_perfect_1_1_enabled:
-                    no_matches_text += " and NS Perfect 1_1 filter"
+                    filter_texts.append("NS Perfect 1_1")
+                if self.filter_perfect2_2_enabled:
+                    filter_texts.append("Perfect2_2")
+                if filter_texts:
+                    no_matches_text += f" and filters: {' + '.join(filter_texts)}"
                 self.show_empty_message(no_matches_text)
         else:
             self.show_empty_message(f"No scheduled matches found for {target_date.strftime('%d/%m/%Y')}")
@@ -1862,7 +2361,16 @@ class ProfessionalFootballApp(MDApp):
             from kivy.core.window import Window
             Window.add_widget(popup)
             
-            Clock.schedule_once(lambda dt: self.load_popup_statistics_improved(match_data, popup), 0.1)
+            # التحقق من وجود بيانات في الكاش أولاً
+            match_id = match_data.get('id')
+            cached_data = self.get_from_perfect2_2_cache(match_id)
+            
+            if cached_data:
+                # استخدام البيانات من الكاش
+                Clock.schedule_once(lambda dt: self.load_popup_from_cache(match_data, popup, cached_data), 0.1)
+            else:
+                # جلب البيانات من API
+                Clock.schedule_once(lambda dt: self.load_popup_statistics_improved(match_data, popup), 0.1)
             
             anim = Animation(opacity=1, duration=0.3)
             anim.start(popup)
@@ -1872,7 +2380,79 @@ class ProfessionalFootballApp(MDApp):
         except Exception as e:
             print(f"❌ Error showing stats popup: {e}")
             self.show_snackbar("⚠️ خطأ في فتح الإحصائيات")
-
+    
+    def load_popup_from_cache(self, match_data, popup, cached_data):
+        """تحميل البيانات من الكاش للبوب أب مع الأهداف المستقبلة"""
+        try:
+            home_team_name = match_data.get('full_home_team', match_data.get('home_team', ''))
+            away_team_name = match_data.get('full_away_team', match_data.get('away_team', ''))
+            
+            # تعيين بيانات الكاش
+            popup.from_cache = True
+            popup.cache_data = cached_data
+            
+            # استخراج بيانات الأهداف من الكاش
+            home_goals_for = cached_data.get('home_goals_last3', 0)
+            home_goals_against = cached_data.get('home_goals_against_last3', 0)
+            away_goals_for = cached_data.get('away_goals_last3', 0)
+            away_goals_against = cached_data.get('away_goals_against_last3', 0)
+            
+            # تحديد ترتيب الفرق بناءً على الأهداف المسجلة
+            if home_goals_for >= away_goals_for:
+                first_team_role = 'home'
+                second_team_role = 'away'
+            else:
+                first_team_role = 'away'
+                second_team_role = 'home'
+            
+            if first_team_role == 'home':
+                popup.first_team_name_display = home_team_name
+                popup.second_team_name_display = away_team_name
+                
+                # تعيين الأهداف المسجلة والمستقبلة
+                popup.first_team_goals_for = str(home_goals_for)
+                popup.first_team_goals_against = str(home_goals_against)
+                popup.second_team_goals_for = str(away_goals_for)
+                popup.second_team_goals_against = str(away_goals_against)
+                
+                # تعيين الترتيب
+                popup.first_team_current_rank = str(cached_data.get('home_rank_current', 'N/A'))
+                popup.first_team_last_rank = str(cached_data.get('home_rank_last', 'N/A'))
+                popup.second_team_current_rank = str(cached_data.get('away_rank_current', 'N/A'))
+                popup.second_team_last_rank = str(cached_data.get('away_rank_last', 'N/A'))
+            else:
+                popup.first_team_name_display = away_team_name
+                popup.second_team_name_display = home_team_name
+                
+                # تعيين الأهداف المسجلة والمستقبلة
+                popup.first_team_goals_for = str(away_goals_for)
+                popup.first_team_goals_against = str(away_goals_against)
+                popup.second_team_goals_for = str(home_goals_for)
+                popup.second_team_goals_against = str(home_goals_against)
+                
+                # تعيين الترتيب
+                popup.first_team_current_rank = str(cached_data.get('away_rank_current', 'N/A'))
+                popup.first_team_last_rank = str(cached_data.get('away_rank_last', 'N/A'))
+                popup.second_team_current_rank = str(cached_data.get('home_rank_current', 'N/A'))
+                popup.second_team_last_rank = str(cached_data.get('home_rank_last', 'N/A'))
+            
+            # تحديد الألوان بناءً على الأداء
+            popup.first_team_color = self._determine_color_based_on_performance(
+                popup.first_team_goals_for, popup.first_team_goals_against
+            )
+            popup.second_team_color = self._determine_color_based_on_performance(
+                popup.second_team_goals_for, popup.second_team_goals_against
+            )
+            
+            print(f"✅ Loaded popup data from Perfect2_2 cache for match {match_data.get('id')}")
+            print(f"   Home: {home_goals_for} scored, {home_goals_against} conceded")
+            print(f"   Away: {away_goals_for} scored, {away_goals_against} conceded")
+            
+        except Exception as e:
+            print(f"❌ Error loading popup from cache: {e}")
+            # في حالة الخطأ، نعود للطريقة العادية
+            self.load_popup_statistics_improved(match_data, popup)
+    
     def load_popup_statistics_improved(self, match_data, popup):
         try:
             home_team_id = match_data.get('home_team_id')
@@ -2126,7 +2706,8 @@ class ProfessionalFootballApp(MDApp):
             else:
                 return []
                 
-        except Exception:
+        except Exception as e:
+            print(f"Error fetching live matches: {e}")
             return []
 
     def refresh_live_data_loop(self, dt):
@@ -2163,7 +2744,8 @@ class ProfessionalFootballApp(MDApp):
                     return live_matches
             return []
                 
-        except Exception:
+        except Exception as e:
+            print(f"Error fetching live matches for update: {e}")
             return []
 
     @mainthread
@@ -2883,6 +3465,7 @@ class ProfessionalFootballApp(MDApp):
         matches_count = len(self.favorites)
         leagues_count = len(self.favorite_leagues)
         hidden_count = len(self.hidden_matches)
+        perfect2_2_count = len(self.perfect2_2_cache)
         
         stats_box.add_widget(MDLabel(
             text=f"Favorite matches: {matches_count}",
@@ -2899,6 +3482,11 @@ class ProfessionalFootballApp(MDApp):
             theme_text_color='Primary',
             halign='center'
         ))
+        stats_box.add_widget(MDLabel(
+            text=f"Perfect2_2 cached: {perfect2_2_count}",
+            theme_text_color='Primary',
+            halign='center'
+        ))
         
         container.add_widget(stats_box)
         
@@ -2906,8 +3494,70 @@ class ProfessionalFootballApp(MDApp):
         filter_header.md_bg_color = get_color_from_hex("#E1F5FE")
         container.add_widget(filter_header)
         
-        filter_buttons_box = MDBoxLayout(orientation='vertical', spacing=dp(10), size_hint_y=None, height=dp(250))
+        filter_buttons_box = MDBoxLayout(orientation='vertical', spacing=dp(10), size_hint_y=None, height=dp(320))
         
+        # فلتر Perfect2_2
+        btn_perfect2_2 = MDBoxLayout(
+            orientation='horizontal',
+            size_hint_y=None,
+            height=dp(40),
+            padding=dp(5),
+            spacing=dp(10)
+        )
+        btn_perfect2_2_label = MDLabel(
+            text="🎯 Perfect2_2 Filter (Calendar & Finished)",
+            theme_text_color='Primary',
+            halign='left',
+            valign='center',
+            size_hint_x=0.8
+        )
+        btn_perfect2_2_icon = MDIconButton(
+            icon= "checkbox-marked" if self.filter_perfect2_2_enabled else "checkbox-blank-outline",
+            theme_text_color='Custom',
+            text_color=get_color_from_hex("#4CAF50") if self.filter_perfect2_2_enabled else get_color_from_hex("#757575"),
+            on_release=lambda x: self.toggle_filter_perfect2_2(),
+            size_hint_x=0.2
+        )
+        btn_perfect2_2.add_widget(btn_perfect2_2_label)
+        btn_perfect2_2.add_widget(btn_perfect2_2_icon)
+        filter_buttons_box.add_widget(btn_perfect2_2)
+        
+        # زر لعرض الكاش المخزن
+        btn_view_cache = MDRaisedButton(
+            text="📊 View Perfect2_2 Cache",
+            on_release=lambda x: self.show_perfect2_2_cached_matches(),
+            size_hint_y=None,
+            height=dp(40)
+        )
+        filter_buttons_box.add_widget(btn_view_cache)
+        
+        # فلتر NS Perfect 1_1
+        btn_ns_filter = MDBoxLayout(
+            orientation='horizontal',
+            size_hint_y=None,
+            height=dp(40),
+            padding=dp(5),
+            spacing=dp(10)
+        )
+        btn_ns_filter_label = MDLabel(
+            text="📅 NS Filter (Perfect 1_1) for Calendar",
+            theme_text_color='Primary',
+            halign='left',
+            valign='center',
+            size_hint_x=0.8
+        )
+        btn_ns_filter_icon = MDIconButton(
+            icon= "checkbox-marked" if self.filter_ns_perfect_1_1_enabled else "checkbox-blank-outline",
+            theme_text_color='Custom',
+            text_color=get_color_from_hex("#4CAF50") if self.filter_ns_perfect_1_1_enabled else get_color_from_hex("#757575"),
+            on_release=lambda x: self.toggle_filter_ns_perfect_1_1(),
+            size_hint_x=0.2
+        )
+        btn_ns_filter.add_widget(btn_ns_filter_label)
+        btn_ns_filter.add_widget(btn_ns_filter_icon)
+        filter_buttons_box.add_widget(btn_ns_filter)
+        
+        # الفلترات الأخرى الحالية
         btn_condition1 = MDRaisedButton(
             text="🔍 Condition 1: One Team Scored/No Goals",
             on_release=lambda x: self.apply_filter_condition_1(),
@@ -2932,35 +3582,10 @@ class ProfessionalFootballApp(MDApp):
             md_bg_color=get_color_from_hex("#00A0B0")
         )
         filter_buttons_box.add_widget(btn_combined_1_2)
-
-        btn_ns_filter = MDBoxLayout(
-            orientation='horizontal',
-            size_hint_y=None,
-            height=dp(40),
-            padding=dp(5),
-            spacing=dp(10)
-        )
-        btn_ns_filter_label = MDLabel(
-            text="📅 NS Filter (Perfect 1_1) for Calendar",
-            theme_text_color='Primary',
-            halign='left',
-            valign='center',
-            size_hint_x=0.8
-        )
-        btn_ns_filter_icon = MDIconButton(
-            icon= "checkbox-marked" if self.filter_ns_perfect_1_1_enabled else "checkbox-blank-outline",
-            theme_text_color='Custom',
-            text_color=get_color_from_hex("#4CAF50") if self.filter_ns_perfect_1_1_enabled else get_color_from_hex("#F44336"),
-            on_release=lambda x: self.toggle_filter_ns_perfect_1_1(),
-            size_hint_x=0.2
-        )
-        btn_ns_filter.add_widget(btn_ns_filter_label)
-        btn_ns_filter.add_widget(btn_ns_filter_icon)
-        filter_buttons_box.add_widget(btn_ns_filter)
         
         btn_reset = MDFlatButton(
-            text="🔄 Reset Filter",
-            on_release=lambda x: self.reset_filter_ui(),
+            text="🔄 Reset All Filters",
+            on_release=lambda x: self.reset_all_filters(),
             size_hint_y=None,
             height=dp(40)
         )
@@ -2986,6 +3611,21 @@ class ProfessionalFootballApp(MDApp):
         container.add_widget(OneLineListItem(text="📱 Version: 1.0.0"))
         container.add_widget(OneLineListItem(text="⚽ Football Live App"))
         container.add_widget(OneLineListItem(text="👨‍💻 Developed with KivyMD"))
+    
+    def reset_all_filters(self):
+        """إعادة تعيين جميع الفلترات"""
+        self.reset_filter()
+        self.filter_ns_perfect_1_1_enabled = False
+        self.filter_perfect2_2_enabled = False
+        
+        self.save_filter_state()
+        
+        if self.current_tab == 'profile':
+            self.show_profile()
+        elif self.current_tab == 'live':
+            self.show_live_matches()
+            
+        self.show_snackbar("✅ All filters reset")
 
     def show_hidden_matches(self):
         container = self.root.ids.main_list
