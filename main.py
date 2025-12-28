@@ -55,7 +55,7 @@ class SQLiteStorage:
                 # ⚠️ عدل اسم الحزمة هنا
                 PACKAGE_NAME = "achaib110"
 
-                base_path = "/storage/emulated/0/Download/FootballAppData"
+                base_path = f"/storage/emulated/0/Android/data/{PACKAGE_NAME}/files"
                 app_folder = os.path.join(base_path, "FootballAppData")
 
                 os.makedirs(app_folder, exist_ok=True)
