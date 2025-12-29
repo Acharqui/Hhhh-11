@@ -34,56 +34,191 @@ from kivymd.uix.progressbar import MDProgressBar
 from kivymd.uix.label import MDLabel
 from kivymd.uix.boxlayout import MDBoxLayout
 
+# إعدادات الشاشة للحاسوب
 if platform not in ("android", "ios"):
     Window.size = (400, 800)
+
+# استيراد المكتبات اللازمة للأندرويد للوصول لـ Java API
+if platform == 'android':
+    from android.permissions import request_permissions, Permission
+    from android import api_version
+    from jnius import autoclass, cast
+    
+    # استدعاء كلاسات أندرويد لإدارة الملفات
+    Environment = autoclass('android.os.Environment')
+    Intent = autoclass('android.content.Intent')
+    Settings = autoclass('android.provider.Settings')
+    Uri = autoclass('android.net.Uri')
+    PythonActivity = autoclass('org.kivy.android.PythonActivity')
+    Context = autoclass('android.content.Context')
+    File = autoclass('java.io.File')
 
 
 class SQLiteStorage:
     def __init__(self, db_name='football_data.db'):
+        # 1. تحديد المسار أولاً
         self.db_path = self._get_external_db_path(db_name)
+        # 2. التأكد من وجود المجلد
         self._ensure_db_directory()
+        # 3. إنشاء/تهيئة قاعدة البيانات
         self.init_database()
+        
         print(f"📁 SQLite DB Path: {self.db_path}")
+        if platform == 'android':
+            print(f"📁 يمكنك الوصول للملف من: /storage/emulated/0/FootballAppDB/")
+        
+        # عرض رسالة للمستخدم
+        self._show_db_location_info()
 
     def _get_external_db_path(self, db_name):
-        """
-        مسار تخزين خارجي آمن ومسموح به في Android 11+
-        ويمكن فتحه وتعديله بواسطة SQLite Manager
-        """
+        """تحديد مسار قاعدة البيانات بناءً على المنصة"""
         if platform == 'android':
             try:
-                # ⚠️ عدل اسم الحزمة هنا
-                PACKAGE_NAME = "org.chaib11100.livescore"
-
-                base_path = f"/storage/emulated/0/Android/data/{PACKAGE_NAME}/files"
-                app_folder = os.path.join(base_path, "FootballAppData")
-
-                os.makedirs(app_folder, exist_ok=True)
-
+                # المسار الأساسي في الذاكرة الداخلية
+                base_path = "/storage/emulated/0"
+                app_folder = os.path.join(base_path, "FootballAppDB")
+                
+                # محاولة إنشاء المجلد
+                try:
+                    os.makedirs(app_folder, exist_ok=True)
+                    print(f"✅ تم إنشاء/التأكد من مجلد: {app_folder}")
+                except Exception as e:
+                    print(f"⚠️ قد يكون هناك مشكلة في الإذن: {e}")
+                
+                # المحاولة باستخدام Java API
+                try:
+                    # استخدام Java File API للتحقق من الإذن
+                    java_file = File(app_folder)
+                    if java_file.canWrite():
+                        print("✅ Java API: يمكن الكتابة في المجلد")
+                    else:
+                        print("⚠️ Java API: لا يمكن الكتابة في المجلد")
+                except:
+                    pass
+                
                 return os.path.join(app_folder, db_name)
-
+                
             except Exception as e:
-                print(f"❌ Storage error: {e}")
-                return db_name
+                print(f"⚠️ فشل المسار الخارجي: {e}")
+                return self._get_fallback_path(db_name)
         else:
-            return db_name
+            # مسار للحواسيب (Windows/Linux/Mac)
+            path = os.path.join(os.path.expanduser("~"), "FootballAppDB")
+            if not os.path.exists(path):
+                os.makedirs(path, exist_ok=True)
+            return os.path.join(path, db_name)
+
+    def _request_manage_storage_permission(self):
+        """طلب إذن MANAGE_EXTERNAL_STORAGE برمجياً للأندرويد"""
+        if platform == 'android':
+            try:
+                # إذا كان الإصدار أندرويد 11 (API 30) أو أعلى
+                if api_version >= 30:
+                    if not Environment.isExternalStorageManager():
+                        try:
+                            # فتح صفحة إعدادات "الوصول لجميع الملفات"
+                            mActivity = PythonActivity.mActivity
+                            intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                            uri = Uri.parse("package:" + mActivity.getPackageName())
+                            intent.setData(uri)
+                            mActivity.startActivity(intent)
+                            print("ℹ️ تم فتح الإعدادات لتفعيل الوصول للملفات")
+                            
+                            # عرض رسالة توجيهية للمستخدم
+                            Clock.schedule_once(lambda dt: self._show_permission_guide(), 2)
+                        except Exception as e:
+                            print(f"⚠️ خطأ في فتح إعدادات الوصول: {e}")
+                            # محاولة فتح الإعدادات العامة
+                            intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                            PythonActivity.mActivity.startActivity(intent)
+                else:
+                    # لأندرويد 10 وأقل، نطلب الإذن التقليدي
+                    permissions = [Permission.WRITE_EXTERNAL_STORAGE, Permission.READ_EXTERNAL_STORAGE]
+                    
+                    def callback(permissions, results):
+                        if all(results):
+                            print("✅ تم منح أذونات التخزين")
+                        else:
+                            print("⚠️ تم رفض بعض الأذونات")
+                    
+                    request_permissions(permissions, callback)
+            except Exception as e:
+                print(f"⚠️ خطأ في طلب الإذن: {e}")
+
+    def _show_permission_guide(self):
+        """عرض رسالة توجيهية للمستخدم"""
+        try:
+            app = MDApp.get_running_app()
+            if app:
+                app.show_snackbar(
+                    "🔧 الرجاء تفعيل 'الوصول لجميع الملفات' في الإعدادات\n"
+                    "ثم أعد تشغيل التطبيق", 
+                    duration=5
+                )
+        except:
+            pass
+
+    def _get_fallback_path(self, db_name):
+        """مسار احتياطي داخل مجلد التطبيق الخاص"""
+        if platform == 'android':
+            try:
+                # استخدام المسار الداخلي للتطبيق
+                context = PythonActivity.mActivity.getApplicationContext()
+                files_dir = context.getFilesDir()
+                return os.path.join(str(files_dir.toString()), db_name)
+            except:
+                # خيار بديل
+                return db_name
+        return db_name
 
     def _ensure_db_directory(self):
-        try:
-            db_dir = os.path.dirname(self.db_path)
-            if db_dir and not os.path.exists(db_dir):
-                os.makedirs(db_dir, exist_ok=True)
-        except Exception as e:
-            print(f"❌ Directory error: {e}")
+        """إنشاء المجلد في ذاكرة الهاتف"""
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                db_dir = os.path.dirname(self.db_path)
+                if db_dir and not os.path.exists(db_dir):
+                    os.makedirs(db_dir, exist_ok=True)
+                    print(f"✅ تم إنشاء المجلد: {db_dir}")
+                
+                # اختبار الكتابة
+                test_file = os.path.join(db_dir, "test_write.tmp")
+                with open(test_file, 'w') as f:
+                    f.write("test")
+                os.remove(test_file)
+                print("✅ اختبار الكتابة ناجح")
+                return
+                
+            except PermissionError:
+                print(f"⚠️ محاولة {attempt+1}: لا يوجد إذن كتابة")
+                if attempt == 0:
+                    # طلب الإذن بعد المحاولة الأولى
+                    Clock.schedule_once(lambda dt: self._request_manage_storage_permission(), 1)
+                time.sleep(1)
+            except Exception as e:
+                print(f"⚠️ خطأ في إنشاء المجلد: {e}")
+                break
+
+    def _show_db_location_info(self):
+        """عرض معلومات موقع قاعدة البيانات"""
+        print(f"📍 موقع قاعدة البيانات:")
+        print(f"   {self.db_path}")
+        print(f"📍 للوصول للملف:")
+        print(f"   1. افتح 'مدير الملفات'")
+        print(f"   2. اذهب إلى '/storage/emulated/0/FootballAppDB/'")
+        print(f"   3. ستجد الملف 'football_data.db'")
 
     def get_connection(self):
+        """الحصول على اتصال بقاعدة البيانات"""
         return sqlite3.connect(self.db_path)
 
     def init_database(self):
+        """تهيئة قاعدة البيانات وإنشاء الجداول"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
 
+            # جدول المباريات المفضلة
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS favorites (
                     id INTEGER PRIMARY KEY,
@@ -91,6 +226,7 @@ class SQLiteStorage:
                 )
             """)
 
+            # جدول المباريات المخفية
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS hidden_matches (
                     id INTEGER PRIMARY KEY,
@@ -98,6 +234,7 @@ class SQLiteStorage:
                 )
             """)
 
+            # جدول الدوريات المفضلة
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS favorite_leagues (
                     id INTEGER PRIMARY KEY,
@@ -106,6 +243,7 @@ class SQLiteStorage:
                 )
             """)
 
+            # جدول الدوريات المحددة
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS selected_leagues (
                     id INTEGER PRIMARY KEY,
@@ -114,6 +252,7 @@ class SQLiteStorage:
                 )
             """)
 
+            # جدول إعدادات الفلتر
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS filter_settings (
                     id INTEGER PRIMARY KEY,
@@ -122,409 +261,223 @@ class SQLiteStorage:
                 )
             """)
 
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS api_cache (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    endpoint TEXT NOT NULL,
-                    params_hash TEXT NOT NULL,
-                    data_json TEXT NOT NULL,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    expires_at DATETIME,
-                    access_count INTEGER DEFAULT 0,
-                    UNIQUE(endpoint, params_hash)
-                )
-            """)
-
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_api_cache_lookup
-                ON api_cache(endpoint, params_hash)
-            """)
-
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_api_cache_expires
-                ON api_cache(expires_at)
-            """)
-
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS cache_stats (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date TEXT UNIQUE,
-                    cache_hits INTEGER DEFAULT 0,
-                    cache_misses INTEGER DEFAULT 0,
-                    api_calls INTEGER DEFAULT 0
-                )
-            """)
-
-            # جدول كاش Perfect2_2 مع إضافة الأهداف المستقبلة
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS perfect2_2_cache (
-                    match_id INTEGER PRIMARY KEY,
-                    home_team_id INTEGER,
-                    away_team_id INTEGER,
-                    league_id INTEGER,
-                    home_goals_last3 INTEGER DEFAULT 0,
-                    home_goals_against_last3 INTEGER DEFAULT 0,
-                    away_goals_last3 INTEGER DEFAULT 0,
-                    away_goals_against_last3 INTEGER DEFAULT 0,
-                    home_rank_current INTEGER,
-                    home_rank_last INTEGER,
-                    away_rank_current INTEGER,
-                    away_rank_last INTEGER,
-                    stored_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    expires_at DATETIME
-                )
-            """)
-
-            # جدول كاش الإحصائيات العامة
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS stats_cache (
-                    match_id INTEGER PRIMARY KEY,
-                    home_team_id INTEGER,
-                    away_team_id INTEGER,
-                    league_id INTEGER,
-                    season INTEGER,
-                    home_stats TEXT,
-                    away_stats TEXT,
-                    home_standings TEXT,
-                    away_standings TEXT,
-                    stored_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    expires_at DATETIME,
-                    access_count INTEGER DEFAULT 0
-                )
-            """)
-
             conn.commit()
             conn.close()
-            print("✅ Database initialized")
+            print("✅ Database initialized successfully")
 
         except Exception as e:
             print(f"❌ DB init error: {e}")
-    
-    def get_connection(self):
-        return sqlite3.connect(self.db_path)
-    
+
     # دوال المباريات المفضلة
     def load_favorites(self):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT match_data FROM favorites')
-        rows = cursor.fetchall()
-        conn.close()
-        
-        favorites = []
-        for row in rows:
-            try:
-                match_data = json.loads(row[0])
-                favorites.append(match_data)
-            except:
-                pass
-        return favorites
-    
-    def save_favorites(self, favorites):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        # مسح القديم وإضافة الجديد
-        cursor.execute('DELETE FROM favorites')
-        
-        for match in favorites:
-            try:
-                match_data = json.dumps(match)
-                cursor.execute('INSERT INTO favorites (match_data) VALUES (?)', (match_data,))
-            except:
-                pass
-        
-        conn.commit()
-        conn.close()
-    
-    # دوال المباريات المخفية
-    def load_hidden_matches(self):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT match_data FROM hidden_matches')
-        rows = cursor.fetchall()
-        conn.close()
-        
-        hidden_matches = []
-        for row in rows:
-            try:
-                match_data = json.loads(row[0])
-                hidden_matches.append(match_data)
-            except:
-                pass
-        return hidden_matches
-    
-    def save_hidden_matches(self, hidden_matches):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('DELETE FROM hidden_matches')
-        
-        for match in hidden_matches:
-            try:
-                match_data = json.dumps(match)
-                cursor.execute('INSERT INTO hidden_matches (match_data) VALUES (?)', (match_data,))
-            except:
-                pass
-        
-        conn.commit()
-        conn.close()
-    
-    # دوال الدوريات المفضلة
-    def load_favorite_leagues(self):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT league_name, league_id FROM favorite_leagues')
-        rows = cursor.fetchall()
-        conn.close()
-        
-        favorite_leagues = []
-        for row in rows:
-            favorite_leagues.append({'name': row[0], 'id': row[1]})
-        return favorite_leagues
-    
-    def save_favorite_leagues(self, favorite_leagues):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('DELETE FROM favorite_leagues')
-        
-        for league in favorite_leagues:
-            try:
-                cursor.execute('INSERT INTO favorite_leagues (league_name, league_id) VALUES (?, ?)',
-                             (league['name'], league['id']))
-            except:
-                pass
-        
-        conn.commit()
-        conn.close()
-    
-    # دوال الدوريات المحددة
-    def load_league_selection(self):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT league_name, league_id FROM selected_leagues')
-        rows = cursor.fetchall()
-        conn.close()
-        
-        selected_leagues = []
-        for row in rows:
-            selected_leagues.append({'name': row[0], 'id': row[1]})
-        return selected_leagues
-    
-    def save_league_selection(self, selected_leagues):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('DELETE FROM selected_leagues')
-        
-        for league in selected_leagues:
-            try:
-                cursor.execute('INSERT INTO selected_leagues (league_name, league_id) VALUES (?, ?)',
-                             (league['name'], league['id']))
-            except:
-                pass
-        
-        conn.commit()
-        conn.close()
-    
-    # دوال إعدادات الفلتر
-    def load_filter_state(self, setting_name):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT setting_value FROM filter_settings WHERE setting_name = ?', (setting_name,))
-        row = cursor.fetchone()
-        conn.close()
-        
-        if row:
-            return row[0] == 'True'
-        return False
-    
-    def save_filter_state(self, setting_name, state):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT OR REPLACE INTO filter_settings (setting_name, setting_value)
-            VALUES (?, ?)
-        ''', (setting_name, str(state)))
-        
-        conn.commit()
-        conn.close()
-    
-    # دوال كاش Perfect2_2
-    def load_perfect2_2_cache(self):
-        """تحميل كاش Perfect2_2 من قاعدة البيانات"""
-        cache = {}
+        """تحميل المباريات المفضلة"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            
-            cursor.execute('SELECT * FROM perfect2_2_cache')
+            cursor.execute('SELECT match_data FROM favorites')
             rows = cursor.fetchall()
-            
-            for row in rows:
-                match_id = row[0]
-                cache[match_id] = {
-                    'home_team_id': row[1],
-                    'away_team_id': row[2],
-                    'league_id': row[3],
-                    'home_goals_last3': row[4],
-                    'home_goals_against_last3': row[5],
-                    'away_goals_last3': row[6],
-                    'away_goals_against_last3': row[7],
-                    'home_rank_current': row[8],
-                    'home_rank_last': row[9],
-                    'away_rank_current': row[10],
-                    'away_rank_last': row[11],
-                    'stored_time': row[12],
-                    'expires_at': row[13]
-                }
-            
             conn.close()
-            print(f"✅ تم تحميل {len(rows)} سجل من كاش Perfect2_2")
             
-        except Exception as e:
-            print(f"❌ خطأ في تحميل كاش Perfect2_2: {e}")
-        
-        return cache
-    
-    def save_perfect2_2_cache(self, cache):
-        """حفظ كاش Perfect2_2 في قاعدة البيانات"""
+            favorites = []
+            for row in rows:
+                try:
+                    match_data = json.loads(row[0])
+                    favorites.append(match_data)
+                except:
+                    pass
+            return favorites
+        except:
+            return []
+
+    def save_favorites(self, favorites):
+        """حفظ المباريات المفضلة"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # مسح القديم
-            cursor.execute('DELETE FROM perfect2_2_cache')
+            cursor.execute('DELETE FROM favorites')
             
-            # إضافة الجديد
-            for match_id, data in cache.items():
-                cursor.execute('''
-                    INSERT INTO perfect2_2_cache 
-                    (match_id, home_team_id, away_team_id, league_id, 
-                     home_goals_last3, home_goals_against_last3,
-                     away_goals_last3, away_goals_against_last3,
-                     home_rank_current, home_rank_last,
-                     away_rank_current, away_rank_last,
-                     stored_time, expires_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    match_id,
-                    data.get('home_team_id'),
-                    data.get('away_team_id'),
-                    data.get('league_id'),
-                    data.get('home_goals_last3', 0),
-                    data.get('home_goals_against_last3', 0),
-                    data.get('away_goals_last3', 0),
-                    data.get('away_goals_against_last3', 0),
-                    data.get('home_rank_current'),
-                    data.get('home_rank_last'),
-                    data.get('away_rank_current'),
-                    data.get('away_rank_last'),
-                    data.get('stored_time', datetime.now().isoformat()),
-                    data.get('expires_at')
-                ))
+            for match in favorites:
+                try:
+                    match_data = json.dumps(match)
+                    cursor.execute('INSERT INTO favorites (match_data) VALUES (?)', (match_data,))
+                except:
+                    pass
             
             conn.commit()
             conn.close()
-            print(f"✅ تم حفظ {len(cache)} سجل في كاش Perfect2_2")
+        except:
+            pass
+
+    # دوال المباريات المخفية
+    def load_hidden_matches(self):
+        """تحميل المباريات المخفية"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT match_data FROM hidden_matches')
+            rows = cursor.fetchall()
+            conn.close()
             
-        except Exception as e:
-            print(f"❌ خطأ في حفظ كاش Perfect2_2: {e}")
-    
-    # دوال كاش الإحصائيات العامة
-    def load_stats_cache(self, match_id):
-        """تحميل إحصائيات مباراة من الكاش"""
+            hidden_matches = []
+            for row in rows:
+                try:
+                    match_data = json.loads(row[0])
+                    hidden_matches.append(match_data)
+                except:
+                    pass
+            return hidden_matches
+        except:
+            return []
+
+    def save_hidden_matches(self, hidden_matches):
+        """حفظ المباريات المخفية"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            cursor.execute('''
-                SELECT * FROM stats_cache 
-                WHERE match_id = ? 
-                AND expires_at > datetime('now')
-            ''', (match_id,))
+            cursor.execute('DELETE FROM hidden_matches')
             
+            for match in hidden_matches:
+                try:
+                    match_data = json.dumps(match)
+                    cursor.execute('INSERT INTO hidden_matches (match_data) VALUES (?)', (match_data,))
+                except:
+                    pass
+            
+            conn.commit()
+            conn.close()
+        except:
+            pass
+
+    # دوال الدوريات المفضلة
+    def load_favorite_leagues(self):
+        """تحميل الدوريات المفضلة"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT league_name, league_id FROM favorite_leagues')
+            rows = cursor.fetchall()
+            conn.close()
+            
+            favorite_leagues = []
+            for row in rows:
+                favorite_leagues.append({'name': row[0], 'id': row[1]})
+            return favorite_leagues
+        except:
+            return []
+
+    def save_favorite_leagues(self, favorite_leagues):
+        """حفظ الدوريات المفضلة"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('DELETE FROM favorite_leagues')
+            
+            for league in favorite_leagues:
+                try:
+                    cursor.execute('INSERT INTO favorite_leagues (league_name, league_id) VALUES (?, ?)',
+                                 (league['name'], league['id']))
+                except:
+                    pass
+            
+            conn.commit()
+            conn.close()
+        except:
+            pass
+
+    # دوال الدوريات المحددة
+    def load_league_selection(self):
+        """تحميل الدوريات المحددة"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT league_name, league_id FROM selected_leagues')
+            rows = cursor.fetchall()
+            conn.close()
+            
+            selected_leagues = []
+            for row in rows:
+                selected_leagues.append({'name': row[0], 'id': row[1]})
+            return selected_leagues
+        except:
+            return []
+
+    def save_league_selection(self, selected_leagues):
+        """حفظ الدوريات المحددة"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('DELETE FROM selected_leagues')
+            
+            for league in selected_leagues:
+                try:
+                    cursor.execute('INSERT INTO selected_leagues (league_name, league_id) VALUES (?, ?)',
+                                 (league['name'], league['id']))
+                except:
+                    pass
+            
+            conn.commit()
+            conn.close()
+        except:
+            pass
+
+    # دوال إعدادات الفلتر
+    def load_filter_state(self, setting_name):
+        """تحميل حالة الفلتر"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT setting_value FROM filter_settings WHERE setting_name = ?', (setting_name,))
             row = cursor.fetchone()
             conn.close()
             
             if row:
-                return {
-                    'match_id': row[0],
-                    'home_team_id': row[1],
-                    'away_team_id': row[2],
-                    'league_id': row[3],
-                    'season': row[4],
-                    'home_stats': json.loads(row[5]),
-                    'away_stats': json.loads(row[6]),
-                    'home_standings': json.loads(row[7]),
-                    'away_standings': json.loads(row[8]),
-                    'stored_time': row[9],
-                    'access_count': row[11]
-                }
-            return None
-            
-        except Exception as e:
-            print(f"❌ خطأ في تحميل كاش الإحصائيات: {e}")
-            return None
-    
-    def save_stats_cache(self, match_id, data):
-        """حفظ إحصائيات مباراة في الكاش"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            expires_at = (datetime.now() + timedelta(days=7)).isoformat()
-            
-            cursor.execute('''
-                INSERT OR REPLACE INTO stats_cache 
-                (match_id, home_team_id, away_team_id, league_id, season,
-                 home_stats, away_stats, home_standings, away_standings,
-                 expires_at, access_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
-                        COALESCE((SELECT access_count + 1 FROM stats_cache WHERE match_id = ?), 1))
-            ''', (
-                match_id,
-                data.get('home_team_id'),
-                data.get('away_team_id'),
-                data.get('league_id'),
-                data.get('season'),
-                json.dumps(data.get('home_stats', {})),
-                json.dumps(data.get('away_stats', {})),
-                json.dumps(data.get('home_standings', {})),
-                json.dumps(data.get('away_standings', {})),
-                expires_at,
-                match_id
-            ))
-            
-            conn.commit()
-            conn.close()
-            print(f"✅ تم حفظ إحصائيات المباراة {match_id} في الكاش")
-            
-        except Exception as e:
-            print(f"❌ خطأ في حفظ كاش الإحصائيات: {e}")
-    
-    def update_cache_access_count(self, match_id):
-        """تحديث عدد مرات الوصول للكاش"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                UPDATE stats_cache 
-                SET access_count = access_count + 1,
-                    last_accessed = datetime('now')
-                WHERE match_id = ?
-            ''', (match_id,))
-            
-            conn.commit()
-            conn.close()
-            
-        except Exception as e:
-            print(f"❌ خطأ في تحديث عداد الوصول: {e}")
+                return row[0] == 'True'
+            return False
+        except:
+            return False
 
+    def save_filter_state(self, setting_name, state):
+        """حفظ حالة الفلتر"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO filter_settings (setting_name, setting_value)
+                VALUES (?, ?)
+            ''', (setting_name, str(state)))
+            
+            conn.commit()
+            conn.close()
+        except:
+            pass
+
+    # دالة تصدير قاعدة البيانات
+    def export_database(self):
+        """تصدير قاعدة البيانات إلى مجلد التنزيلات"""
+        try:
+            if platform == 'android':
+                # مسار التنزيلات
+                download_path = "/storage/emulated/0/Download/football_data_backup.db"
+                
+                import shutil
+                shutil.copy2(self.db_path, download_path)
+                
+                print(f"✅ تم تصدير قاعدة البيانات إلى: {download_path}")
+                return download_path
+            else:
+                print("ℹ️ خاصية التصدير متاحة فقط على أندرويد")
+                return None
+        except Exception as e:
+            print(f"❌ خطأ في تصدير قاعدة البيانات: {e}")
+            return None
+
+
+# ==================== باقي فصول التطبيق ====================
 
 class CalendarHeader(MDBoxLayout):
     selected_date = StringProperty("")
@@ -571,6 +524,7 @@ class CalendarHeader(MDBoxLayout):
 
 
 class StatsPopup(MDFloatLayout):
+    # ... [جميع الخصائص الموجودة في الكود الأصلي] ...
     home_team_name = StringProperty("")
     away_team_name = StringProperty("")
     first_team_name_display = StringProperty("")
@@ -597,7 +551,6 @@ class StatsPopup(MDFloatLayout):
     first_last_rank_color = StringProperty("#AAAAAA")
     second_last_rank_color = StringProperty("#AAAAAA")
     
-    # خصائص جديدة لعرض بيانات الكاش
     from_cache = BooleanProperty(False)
     cache_data = DictProperty({})
     
@@ -634,7 +587,6 @@ class StatsPopup(MDFloatLayout):
                 copied_text = f"{team_rank}{opponent_rank}"
                 message_type = "ترتيب الموسم الماضي"
 
-            # نسخ إلى الحافظة
             Clipboard.copy(copied_text)
             MDApp.get_running_app().show_snackbar(
                 f"✅ تم نسخ {message_type} لـ {team_name}: {copied_text}", 
@@ -807,31 +759,27 @@ class OptimizedCompactMatchItem(MDCard):
         app = MDApp.get_running_app()
         match_id = self.match_data.get('id')
         
-        # تحقق إذا كانت المباراة في القائمة المخفية
         is_in_hidden_list = app.is_hidden(match_id)
         
         if not is_in_hidden_list:
-            # إخفاء المباراة: إضافتها إلى القائمة المخفية
             app.add_hidden_match(self.match_data)
             app.show_snackbar(f"✅ Match hidden: {self.home_team} vs {self.away_team}")
             
-            # إزالة المباراة من جميع القوائم مباشرة
             app.remove_match_from_all_lists(match_id)
             
-            # إزالة الودجت من الشاشة
             parent = self.parent
             if parent:
                 parent.remove_widget(self)
         else:
-            # إزالة المباراة من القائمة المخفية
             app.remove_hidden_match(match_id)
             app.show_snackbar(f"✅ Match unhidden: {self.home_team} vs {self.away_team}")
             
-            # إزالة الودجت من الشاشة
             parent = self.parent
             if parent:
                 parent.remove_widget(self)
 
+
+# ==================== واجهة KV ====================
 
 KV = '''
 #:import get_color_from_hex kivy.utils.get_color_from_hex
@@ -880,9 +828,9 @@ KV = '''
         pos_hint: {'center_x': 0.5, 'center_y': 0.5}
         
         MDLabel:
-            text: "From Cache" if root.from_cache else "Live Stats"
+            text: "Live Stats"
             theme_text_color: 'Custom'
-            text_color: get_color_from_hex("#4CAF50") if root.from_cache else get_color_from_hex("#2196F3")
+            text_color: get_color_from_hex("#2196F3")
             font_style: 'Caption'
             halign: 'center'
             bold: True
@@ -1402,6 +1350,9 @@ BoxLayout:
             text: 'Profile'
 '''
 
+
+# ==================== التطبيق الرئيسي ====================
+
 class ProfessionalFootballApp(MDApp):
     current_tab = StringProperty('live')
     current_title = StringProperty('Live Matches')
@@ -1435,8 +1386,6 @@ class ProfessionalFootballApp(MDApp):
     calendar_mode = BooleanProperty(False)
     
     filter_ns_perfect_1_1_enabled = BooleanProperty(False)  
-    filter_perfect2_2_enabled = BooleanProperty(False)
-    perfect2_2_cache = DictProperty({})
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1449,6 +1398,7 @@ class ProfessionalFootballApp(MDApp):
         self.leagues_loaded = False
         self._update_event = None
 
+        # تهيئة نظام التخزين مع مسار قاعدة البيانات الجديد
         self.storage = SQLiteStorage()
 
         self.filtered_matches = []
@@ -1462,12 +1412,10 @@ class ProfessionalFootballApp(MDApp):
         self.current_calendar_date = datetime.now().date()
         self.calendar_mode = False
         
-
+        # إزالة كاش الإحصائيات
         self.team_stats_cache = {}
         self.team_standings_cache = {}
         self.cache_timeout = 300
-        
-        self.perfect2_2_cache = {}
     
     def build(self):
         self.theme_cls.primary_palette = 'Blue'
@@ -1478,41 +1426,101 @@ class ProfessionalFootballApp(MDApp):
         self.update_time()
         Clock.schedule_interval(self.update_time, 60)
         
+        # تحميل البيانات من قاعدة البيانات الجديدة
         self.load_favorites()
         self.load_hidden_matches()
         self.load_league_selection()
         self.load_favorite_leagues()
-
         self.load_filter_state()
         
-        # تحميل كاش Perfect2_2
-        self.perfect2_2_cache = self.storage.load_perfect2_2_cache()
-        
+        # بدء تحميل البيانات
         Clock.schedule_once(lambda dt: self.load_leagues_and_matches(), 0.5)
-        
         Clock.schedule_once(lambda dt: self.schedule_auto_filter(), 10)
         
         return Builder.load_string(KV)
     
+    def on_start(self):
+        """عند بدء التطبيق"""
+        super().on_start()
+        # إضافة زر تصدير قاعدة البيانات في صفحة البروفايل
+        self._modify_profile_page()
+    
+    def _modify_profile_page(self):
+        """تعديل صفحة البروفايل لإضافة زر تصدير قاعدة البيانات"""
+        original_show_profile = self.show_profile
+        
+        def new_show_profile():
+            original_show_profile()
+            
+            # إضافة أزرار خاصة بقاعدة البيانات
+            container = self.root.ids.main_list
+            
+            # زر تصدير قاعدة البيانات
+            export_btn = MDRaisedButton(
+                text="💾 Export Database to Downloads",
+                on_release=lambda x: self._export_database(),
+                pos_hint={'center_x': 0.5},
+                size_hint_x=0.9,
+                md_bg_color=get_color_from_hex("#4CAF50"),
+                size_hint_y=None,
+                height=dp(40)
+            )
+            container.add_widget(export_btn)
+            
+            # زر عرض معلومات قاعدة البيانات
+            info_btn = MDFlatButton(
+                text="📂 Show Database Location",
+                on_release=lambda x: self._show_database_info(),
+                pos_hint={'center_x': 0.5},
+                size_hint_x=0.9,
+                size_hint_y=None,
+                height=dp(40)
+            )
+            container.add_widget(info_btn)
+        
+        self.show_profile = new_show_profile
+    
+    def _export_database(self):
+        """تصدير قاعدة البيانات"""
+        export_path = self.storage.export_database()
+        if export_path:
+            self.show_snackbar(f"✅ تم تصدير قاعدة البيانات إلى: {export_path}")
+        else:
+            self.show_snackbar("❌ فشل تصدير قاعدة البيانات")
+    
+    def _show_database_info(self):
+        """عرض معلومات قاعدة البيانات"""
+        db_path = self.storage.db_path
+        info_text = f"""
+📁 **Database Information:**
+
+**Path:** {db_path}
+
+**Access Instructions:**
+1. Open any file manager app
+2. Navigate to: /storage/emulated/0/FootballAppDB/
+3. Find file: football_data.db
+
+**Note:** You need to grant 'Manage All Files' permission
+        """
+        self.show_dialog("Database Location", info_text)
+    
     def on_stop(self):
+        """عند إيقاف التطبيق"""
         if self._update_event:
             self._update_event.cancel()
             
         if self._auto_filter_event:
             self._auto_filter_event.cancel()
             
+        # حفظ جميع البيانات في قاعدة البيانات الجديدة
         self.save_favorites()
         self.save_hidden_matches()
         self.save_favorite_leagues()
         self.save_league_selection()        
         self.save_filter_state()        
-        self.save_perfect2_2_cache()
         
         super().on_stop()
-    
-    def save_perfect2_2_cache(self):
-        """حفظ كاش Perfect2_2"""
-        self.storage.save_perfect2_2_cache(self.perfect2_2_cache)
 
     def filter_out_hidden_matches_immediately(self, matches_list):
         if not matches_list:
@@ -1565,34 +1573,47 @@ class ProfessionalFootballApp(MDApp):
 
     def load_filter_state(self):
         self.filter_ns_perfect_1_1_enabled = self.storage.load_filter_state('filter_ns_perfect_1_1_enabled')
-        self.filter_perfect2_2_enabled = self.storage.load_filter_state('filter_perfect2_2_enabled')
             
     def save_filter_state(self):
         self.storage.save_filter_state('filter_ns_perfect_1_1_enabled', self.filter_ns_perfect_1_1_enabled)
-        self.storage.save_filter_state('filter_perfect2_2_enabled', self.filter_perfect2_2_enabled)
 
     def filter_ns_perfect_1_1(self, match_data):
         try:
-            # الحصول على البيانات من الكاش فقط
+            # الحصول على البيانات مباشرة من API
             match_id = match_data.get('id')
-            cache_data = self.get_from_perfect2_2_cache(match_id)
+            home_team_id = match_data.get('home_team_id')
+            away_team_id = match_data.get('away_team_id')
+            league_id = match_data.get('league_id')
+            season = match_data.get('season', datetime.now().year)
             
-            if not cache_data:
-                return "❌ no (No cache data available)"
+            if not all([home_team_id, away_team_id, league_id]):
+                return "❌ no (Missing team data)"
             
-            # استخراج البيانات من الكاش
-            home_goals_last3 = cache_data.get('home_goals_last3', 0)
-            away_goals_last3 = cache_data.get('away_goals_last3', 0)
-            home_rank_current = cache_data.get('home_rank_current', 'N/A')
-            away_rank_current = cache_data.get('away_rank_current', 'N/A')
+            # جلب البيانات من API
+            home_goals, home_count = self.fetch_team_last_goals_for_filter_from_api(
+                home_team_id, league_id, season, is_home_team=True, matches_count=3
+            )
+            away_goals, away_count = self.fetch_team_last_goals_for_filter_from_api(
+                away_team_id, league_id, season, is_home_team=False, matches_count=3
+            )
+            
+            if home_count < 3 or away_count < 3:
+                return "❌ no (Not enough matches)"
+            
+            # جلب الترتيب الحالي من API
+            home_rank_current_data = self.fetch_team_standings_for_filter_from_api(home_team_id, league_id, season)
+            away_rank_current_data = self.fetch_team_standings_for_filter_from_api(away_team_id, league_id, season)
+            
+            home_rank_current = home_rank_current_data.get('current_rank', 'N/A')
+            away_rank_current = away_rank_current_data.get('current_rank', 'N/A')
             
             status = match_data.get('status', 'NS')
             if status not in ['NS', 'TBD']:
                 return "❌ no (Match already started)"
             
             # التحقق من عدد المباريات الكافي
-            home_goals = int(home_goals_last3)
-            away_goals = int(away_goals_last3)
+            home_goals = int(home_goals)
+            away_goals = int(away_goals)
             
             if home_goals == away_goals:
                 return f"✅ yes (Equal goals: {home_goals}-{away_goals})"
@@ -1701,15 +1722,8 @@ class ProfessionalFootballApp(MDApp):
             print(f"NS Perfect 1_1 Filter Error: {e}")
             return "❌ no (System Error)"
 
-    def fetch_team_last_goals_for_filter(self, team_id, league_id, season, is_home_team, matches_count=3):
-        cache_key = f"goals_{team_id}_{league_id}_{season}_{'home' if is_home_team else 'away'}_last_{matches_count}"
-        
-        if cache_key in self.team_stats_cache:
-            cached_data = self.team_stats_cache[cache_key]
-            cached_time = cached_data.get('time', 0)
-            if time.time() - cached_time < self.cache_timeout:
-                return cached_data['result']
-        
+    def fetch_team_last_goals_for_filter_from_api(self, team_id, league_id, season, is_home_team, matches_count=3):
+        """جلب الأهداف المسجلة في آخر مباريات من API"""
         try:
             url = f"{self.base_url}/fixtures"
             params = {
@@ -1726,9 +1740,7 @@ class ProfessionalFootballApp(MDApp):
                 matches = data.get('response', [])
                 
                 if not matches:
-                    result = (0, 0)
-                    self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
-                    return result
+                    return 0, 0
                 
                 total_goals = 0
                 valid_matches = 0
@@ -1757,278 +1769,13 @@ class ProfessionalFootballApp(MDApp):
                             total_goals += goals_for
                             valid_matches += 1
                 
-                result = (total_goals, valid_matches)
-                self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
-                return result
+                return total_goals, valid_matches
                 
-            result = (0, 0)
-            self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
-            return result
+            return 0, 0
             
         except Exception as e:
-            print(f"Error in fetch_team_last_goals_for_filter for team {team_id}: {e}")
-            result = (0, 0)
-            self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
-            return result
-
-    def fetch_team_last_goals_for_and_against(self, team_id, league_id, season, is_home_team, matches_count=3):
-        """جلب الأهداف المسجلة والمستقبلة في آخر 3 مباريات"""
-        cache_key = f"goals_for_against_{team_id}_{league_id}_{season}_{'home' if is_home_team else 'away'}_last_{matches_count}"
-        
-        if cache_key in self.team_stats_cache:
-            cached_data = self.team_stats_cache[cache_key]
-            cached_time = cached_data.get('time', 0)
-            if time.time() - cached_time < self.cache_timeout:
-                return cached_data['result']
-        
-        try:
-            url = f"{self.base_url}/fixtures"
-            params = {
-                'team': team_id,
-                'league': league_id,
-                'season': season,
-                'last': 15
-            }
-            
-            response = requests.get(url, headers=self.headers, params=params, timeout=15)
-            
-            if response.status_code == 200:
-                data = response.json()
-                matches = data.get('response', [])
-                
-                if not matches:
-                    result = (0, 0, 0)
-                    self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
-                    return result
-                
-                total_goals_for = 0
-                total_goals_against = 0
-                valid_matches = 0
-                
-                for match in matches:
-                    if valid_matches >= matches_count:
-                        break
-                        
-                    fixture = match.get('fixture', {})
-                    match_league = match.get('league', {})
-                    
-                    if (fixture.get('status', {}).get('short') == 'FT' and 
-                        match_league.get('id') == league_id):
-                        
-                        teams = match.get('teams', {})
-                        goals = match.get('goals', {})
-
-                        is_current_team_home = teams.get('home', {}).get('id') == team_id
-                        
-                        if (is_home_team and is_current_team_home) or (not is_home_team and not is_current_team_home):
-                            if is_current_team_home:
-                                goals_for = goals.get('home', 0)
-                                goals_against = goals.get('away', 0)
-                            else:
-                                goals_for = goals.get('away', 0)
-                                goals_against = goals.get('home', 0)
-                            
-                            total_goals_for += goals_for
-                            total_goals_against += goals_against
-                            valid_matches += 1
-                
-                result = (total_goals_for, total_goals_against, valid_matches)
-                self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
-                return result
-                
-            result = (0, 0, 0)
-            self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
-            return result
-            
-        except Exception as e:
-            print(f"Error in fetch_team_last_goals_for_and_against for team {team_id}: {e}")
-            result = (0, 0, 0)
-            self.team_stats_cache[cache_key] = {'result': result, 'time': time.time()}
-            return result
-
-    def fetch_team_standings_for_filter(self, team_id, league_id, season):
-        cache_key = f"standings_filter_{league_id}_{season}_{team_id}"
-
-        if cache_key in self.team_standings_cache:
-            cached_data = self.team_standings_cache[cache_key]
-            cached_time = cached_data.get('time', 0)
-            if time.time() - cached_time < self.cache_timeout:
-                return cached_data['result']
-        
-        try:
-            url = f"{self.base_url}/standings"
-            params = {
-                'league': league_id,
-                'season': season
-            }
-            
-            response = requests.get(url, headers=self.headers, params=params, timeout=15)
-            
-            if response.status_code == 200:
-                data = response.json()
-                standings = data.get('response', [])
-                
-                if standings:
-                    league_standings = standings[0].get('league', {}).get('standings', [])
-
-                    for standing_group in league_standings:
-                        for team_standing in standing_group:
-                            if team_standing.get('team', {}).get('id') == team_id:
-                                result = {
-                                    'current_rank': team_standing.get('rank'),
-                                    'points': team_standing.get('points'),
-                                    'form': team_standing.get('form')
-                                }
-                                self.team_standings_cache[cache_key] = {'result': result, 'time': time.time()}
-                                return result
-                
-
-            result = {'current_rank': 'N/A', 'points': 0, 'form': ''}
-            self.team_standings_cache[cache_key] = {'result': result, 'time': time.time()}
-            return result
-            
-        except Exception as e:
-            print(f"Error in fetch_team_standings_for_filter: {e}")
-            result = {'current_rank': 'N/A', 'points': 0, 'form': ''}
-            self.team_standings_cache[cache_key] = {'result': result, 'time': time.time()}
-            return result
-
-    # ========== فلترة Perfect2_2 ==========
-    
-    def filter_perfect2_2(self, match_data):
-        try:
-            # 1. استخراج البيانات الأساسية للمباراة فقط
-            match_id = match_data.get('id')
-            home_team_id = match_data.get('home_team_id')
-            away_team_id = match_data.get('away_team_id')
-            league_id = match_data.get('league_id')
-            season = match_data.get('season', datetime.now().year)
-            
-            print(f"🎯 Perfect2_2: Processing match {match_id}")
-            
-            # 2. التحقق من وجود البيانات الأساسية
-            if not all([match_id, home_team_id, away_team_id, league_id]):
-                return "❌ no (Missing basic match data)"
-            
-            # 3. التحقق من أن المباراة مجدولة (NS/TBD)
-            if match_data.get('status', 'NS') not in ['NS', 'TBD']:
-                return "❌ no (Match not scheduled - status: {})".format(match_data.get('status', 'NS'))
-            
-            # 4. جلب الأهداف المسجلة والمستقبلة في آخر 3 مباريات من API
-            home_goals_for, home_goals_against, home_count = self.fetch_team_last_goals_for_and_against_from_api(
-                home_team_id, league_id, season, is_home_team=True, matches_count=3
-            )
-            away_goals_for, away_goals_against, away_count = self.fetch_team_last_goals_for_and_against_from_api(
-                away_team_id, league_id, season, is_home_team=False, matches_count=3
-            )
-            
-            # 5. التحقق من عدد المباريات الكافي
-            if home_count < 3 or away_count < 3:
-                return f"❌ no (Not enough matches: H:{home_count}, A:{away_count})"
-            
-            # 6. جلب الترتيب الحالي من API
-            home_rank_current = self.fetch_team_standings_for_filter_from_api(home_team_id, league_id, season)
-            away_rank_current = self.fetch_team_standings_for_filter_from_api(away_team_id, league_id, season)
-            
-            # 7. جلب ترتيب الموسم الماضي مع المنطق الجديد للبحث في جميع الدوريات من API
-            last_season = season - 1
-            
-            # البحث عن ترتيب الموسم الماضي للفريق المضيف من API
-            home_last_standings = self._find_team_in_all_leagues_last_season_from_api(home_team_id, last_season)
-            if not home_last_standings:
-                print(f"⚠️ Home team {home_team_id} not found in last season {last_season}")
-                home_rank_last = "NEW"
-                home_last_status = "new_team"
-            else:
-                home_last_rank = home_last_standings.get('current_rank', 'N/A')
-                home_last_league = home_last_standings.get('league_name', '')
-                
-                # تحليل حالة الفريق المضيف
-                if home_last_rank == 'N/A':
-                    home_rank_last = "NEW"
-                    home_last_status = "new_team"
-                else:
-                    try:
-                        rank_int = int(home_last_rank)
-                        if 1 <= rank_int <= 6:
-                            home_rank_last = f"↑{home_last_rank}"
-                            home_last_status = "promoted_green"
-                        elif 6 < rank_int <= 20:
-                            home_rank_last = f"↓{home_last_rank}"
-                            home_last_status = "relegated_red"
-                        else:
-                            home_rank_last = str(home_last_rank)
-                            home_last_status = "normal"
-                    except:
-                        home_rank_last = str(home_last_rank)
-                        home_last_status = "normal"
-            
-            # البحث عن ترتيب الموسم الماضي للفريق الضيف من API
-            away_last_standings = self._find_team_in_all_leagues_last_season_from_api(away_team_id, last_season)
-            if not away_last_standings:
-                print(f"⚠️ Away team {away_team_id} not found in last season {last_season}")
-                away_rank_last = "NEW"
-                away_last_status = "new_team"
-            else:
-                away_last_rank = away_last_standings.get('current_rank', 'N/A')
-                away_last_league = away_last_standings.get('league_name', '')
-                
-                # تحليل حالة الفريق الضيف
-                if away_last_rank == 'N/A':
-                    away_rank_last = "NEW"
-                    away_last_status = "new_team"
-                else:
-                    try:
-                        rank_int = int(away_last_rank)
-                        if 1 <= rank_int <= 6:
-                            away_rank_last = f"↑{away_last_rank}"
-                            away_last_status = "promoted_green"
-                        elif 6 < rank_int <= 20:
-                            away_rank_last = f"↓{away_last_rank}"
-                            away_last_status = "relegated_red"
-                        else:
-                            away_rank_last = str(away_last_rank)
-                            away_last_status = "normal"
-                    except:
-                        away_rank_last = str(away_last_rank)
-                        away_last_status = "normal"
-            
-            print(f"📊 Perfect2_2 Data - Home: {home_goals_for} goals scored, {home_goals_against} goals conceded, Rank: {home_rank_current.get('current_rank', 'N/A')}({home_rank_last}) Status: {home_last_status}")
-            print(f"📊 Perfect2_2 Data - Away: {away_goals_for} goals scored, {away_goals_against} goals conceded, Rank: {away_rank_current.get('current_rank', 'N/A')}({away_rank_last}) Status: {away_last_status}")
-            
-            # 8. تخزين البيانات في الكاش
-            cache_data = {
-                'home_team_id': home_team_id,
-                'away_team_id': away_team_id,
-                'league_id': league_id,
-                'home_goals_last3': home_goals_for,
-                'home_goals_against_last3': home_goals_against,
-                'away_goals_last3': away_goals_for,
-                'away_goals_against_last3': away_goals_against,
-                'home_rank_current': home_rank_current.get('current_rank', 'N/A') if home_rank_current else 'N/A',
-                'home_rank_last': home_rank_last,
-                'home_last_status': home_last_status,
-                'away_rank_current': away_rank_current.get('current_rank', 'N/A') if away_rank_current else 'N/A',
-                'away_rank_last': away_rank_last,
-                'away_last_status': away_last_status,
-                'stored_time': datetime.now().isoformat(),
-                'expires_at': (datetime.now() + timedelta(days=7)).isoformat()
-            }
-            
-            # 9. إضافة إلى الكاش
-            self.add_to_perfect2_2_cache(match_id, cache_data)
-            
-            # 10. تطبيق منطق الفلترة
-            # الشرط الأساسي: إجمالي الأهداف في آخر 3 مباريات ≥ 6 لكل فريق
-            if home_goals_for < 6 or away_goals_for < 6:
-                return f"❌ no (Goals < 6: H:{home_goals_for} A:{away_goals_for})"
-            
-            # 11. إرجاع "yes" مع معلومات إضافية
-            return f"✅ yes (Goals: H:{home_goals_for}({home_goals_against}) A:{away_goals_for}({away_goals_against}), Ranks: H:{cache_data['home_rank_current']}({home_rank_last})[{home_last_status}] A:{cache_data['away_rank_current']}({away_rank_last})[{away_last_status}])"
-            
-        except Exception as e:
-            print(f"❌ Error in filter_perfect2_2: {e}")
-            return f"❌ no (System error: {e})"
+            print(f"Error in fetch_team_last_goals_for_filter_from_api for team {team_id}: {e}")
+            return 0, 0
 
     def fetch_team_last_goals_for_and_against_from_api(self, team_id, league_id, season, is_home_team, matches_count=3):
         """جلب الأهداف المسجلة والمستقبلة في آخر 3 مباريات من API"""
@@ -2208,202 +1955,56 @@ class ProfessionalFootballApp(MDApp):
             print(f"Error fetching season standings from API: {e}")
             return None
 
-    def get_from_perfect2_2_cache(self, match_id):
-        """الحصول على بيانات من الكاش"""
-        if match_id in self.perfect2_2_cache:
-            cache_data = self.perfect2_2_cache[match_id]
-            
-            # التحقق من الصلاحية
-            expires_at = cache_data.get('expires_at')
-            if expires_at:
-                try:
-                    expire_time = datetime.fromisoformat(expires_at)
-                    if datetime.now() > expire_time:
-                        del self.perfect2_2_cache[match_id]
-                        return None
-                except:
-                    pass
-            
-            return cache_data
-        return None
+    # ========== إزالة نظام الكاش ==========
 
-    def add_to_perfect2_2_cache(self, match_id, data):
-        expires_at = (datetime.now() + timedelta(days=7)).isoformat()
-        
-        self.perfect2_2_cache[match_id] = {
-            **data,
-            'expires_at': expires_at,
-            'stored_time': datetime.now().isoformat()
-        }
-        
-        print(f"✅ تمت إضافة المباراة {match_id} إلى كاش Perfect2_2")
-        
-        self.save_perfect2_2_cache()
-
-    def apply_perfect2_2_to_calendar(self, match_data):
-        """تطبيق الفلترة على مباريات التقويم"""
-        if not self.filter_perfect2_2_enabled:
-            return None
-        
-        # فقط للمباريات المجدولة
-        if match_data.get('status', 'NS') not in ['NS', 'TBD']:
-            return "❌ no (Not scheduled)"
-        
-        return self.filter_perfect2_2(match_data)
-
-    def toggle_filter_perfect2_2(self):
-        """تفعيل/تعطيل الفلترة"""
-        self.filter_perfect2_2_enabled = not self.filter_perfect2_2_enabled
-        self.save_filter_state()
-        
-        status = "✅ تم تفعيل" if self.filter_perfect2_2_enabled else "❌ تم تعطيل"
-        self.show_snackbar(f"{status} فلترة Perfect2_2")
-        
-        if self.current_tab == 'profile':
-            self.show_profile()
-
-    def show_perfect2_2_cached_matches(self):
-        """عرض المباريات المخزنة في الكاش"""
-        container = self.root.ids.main_list
-        container.clear_widgets()
-        
-        if not self.perfect2_2_cache:
-            self.show_empty_message("No matches cached in Perfect2_2")
-            return
-        
-        header = OneLineListItem(text="📊 Perfect2_2 Cached Matches")
-        header.md_bg_color = get_color_from_hex("#4CAF50")
-        container.add_widget(header)
-        
-        count_label = MDLabel(
-            text=f"Total cached matches: {len(self.perfect2_2_cache)}",
-            font_style='Caption',
-            halign='center',
-            theme_text_color='Secondary',
-            size_hint_y=None,
-            height=dp(25)
-        )
-        container.add_widget(count_label)
-        
-        for match_id, cache_data in list(self.perfect2_2_cache.items()):
-            item_text = f"Match ID: {match_id}"
-            home_goals = cache_data.get('home_goals_last3', 0)
-            home_against = cache_data.get('home_goals_against_last3', 0)
-            away_goals = cache_data.get('away_goals_last3', 0)
-            away_against = cache_data.get('away_goals_against_last3', 0)
-            home_rank_current = cache_data.get('home_rank_current', 'N/A')
-            home_rank_last = cache_data.get('home_rank_last', 'N/A')
-            away_rank_current = cache_data.get('away_rank_current', 'N/A')
-            away_rank_last = cache_data.get('away_rank_last', 'N/A')
-            
-            secondary_text = f"H: {home_goals}({home_against}) [{home_rank_current}({home_rank_last})] vs A: {away_goals}({away_against}) [{away_rank_current}({away_rank_last})]"
-            
-            item = TwoLineListItem(
-                text=item_text,
-                secondary_text=secondary_text
-            )
-            
-            delete_btn = MDIconButton(
-                icon='delete',
-                theme_text_color='Custom',
-                text_color=get_color_from_hex("#FF5252"),
-                on_release=lambda x, mid=match_id: self.delete_from_perfect2_2_cache(mid)
-            )
-            
-            item_box = BoxLayout(orientation='horizontal')
-            item_box.add_widget(item)
-            item_box.add_widget(delete_btn)
-            
-            container.add_widget(item_box)
-        
-        clear_btn = MDRaisedButton(
-            text="🗑️ Clear All Cache",
-            md_bg_color=get_color_from_hex("#FF5252"),
-            on_release=lambda x: self.clear_perfect2_2_cache(),
-            pos_hint={'center_x': 0.5},
-            size_hint_x=0.8
-        )
-        container.add_widget(clear_btn)
-        
-        back_btn = MDRaisedButton(
-            text="⬅️ Back to Profile",
-            on_release=lambda x: self.show_profile(),
-            pos_hint={'center_x': 0.5},
-            size_hint_x=0.8
-        )
-        container.add_widget(back_btn)
-
-    def delete_from_perfect2_2_cache(self, match_id):
-        """حذف مباراة من الكاش"""
-        if match_id in self.perfect2_2_cache:
-            del self.perfect2_2_cache[match_id]
-            self.save_perfect2_2_cache()
-            self.show_snackbar(f"✅ Deleted match {match_id} from cache")
-            
-            if self.current_tab == 'profile':
-                self.show_perfect2_2_cached_matches()
-
-    def clear_perfect2_2_cache(self):
-        """حذف الكاش بالكامل"""
-        self.perfect2_2_cache = {}
-        self.save_perfect2_2_cache()
-        self.show_snackbar("✅ Cleared all Perfect2_2 cache")
-        
-        if self.current_tab == 'profile':
-            self.show_perfect2_2_cached_matches()
-
-    # ========== نظام الكاش المحسن ==========
-
-    def get_match_stats_from_cache(self, match_data):
-        """الحصول على إحصائيات المباراة من الكاش أولاً"""
-        match_id = match_data.get('id')
-        
-        # 1. التحقق من كاش الإحصائيات العامة أولاً
-        cached_stats = self.storage.load_stats_cache(match_id)
-        if cached_stats:
-            print(f"✅ Stats loaded from cache for match {match_id}")
-            self.storage.update_cache_access_count(match_id)
-            return {
-                'from_cache': True,
-                'home_stats': cached_stats.get('home_stats'),
-                'away_stats': cached_stats.get('away_stats'),
-                'home_standings': cached_stats.get('home_standings'),
-                'away_standings': cached_stats.get('away_standings'),
-                'access_count': cached_stats.get('access_count', 0)
-            }
-        
-        # 2. التحقق من كاش Perfect2_2
-        perfect2_2_cache = self.get_from_perfect2_2_cache(match_id)
-        if perfect2_2_cache:
-            print(f"✅ Stats loaded from Perfect2_2 cache for match {match_id}")
-            return {
-                'from_cache': True,
-                'from_perfect2_2': True,
-                'cache_data': perfect2_2_cache
-            }
-        
-        return None
-
-    def save_match_stats_to_cache(self, match_data, home_stats, away_stats, home_standings, away_standings):
-        """حفظ إحصائيات المباراة في الكاش"""
+    def load_popup_statistics_from_api(self, match_data, popup):
+        """جلب الإحصائيات من API مباشرة"""
         try:
-            match_id = match_data.get('id')
-            cache_data = {
-                'home_team_id': match_data.get('home_team_id'),
-                'away_team_id': match_data.get('away_team_id'),
-                'league_id': match_data.get('league_id'),
-                'season': match_data.get('season', datetime.now().year),
-                'home_stats': home_stats,
-                'away_stats': away_stats,
-                'home_standings': home_standings,
-                'away_standings': away_standings
-            }
+            home_team_id = match_data.get('home_team_id')
+            away_team_id = match_data.get('away_team_id')
+            league_id = match_data.get('league_id')
+            season = match_data.get('season', datetime.now().year)
             
-            self.storage.save_stats_cache(match_id, cache_data)
-            print(f"✅ Match stats saved to cache: {match_id}")
-            
+            if home_team_id and away_team_id and league_id:
+                def fetch_stats():
+                    try:
+                        first_team_role, second_team_role = self.determine_team_order(match_data)
+                        
+                        if first_team_role == 'home':
+                            first_stats = self.fetch_team_last_matches_improved(home_team_id, league_id, season, is_home_team=True)
+                            second_stats = self.fetch_team_last_matches_improved(away_team_id, league_id, season, is_home_team=False)
+                            first_name_display = popup.home_team_name 
+                            second_name_display = popup.away_team_name
+                            
+                            first_standings = self.fetch_team_standings_improved(home_team_id, league_id, season)
+                            second_standings = self.fetch_team_standings_improved(away_team_id, league_id, season)
+                        else:
+                            first_stats = self.fetch_team_last_matches_improved(away_team_id, league_id, season, is_home_team=False)
+                            second_stats = self.fetch_team_last_matches_improved(home_team_id, league_id, season, is_home_team=True)
+                            first_name_display = popup.away_team_name
+                            second_name_display = popup.home_team_name
+                            
+                            first_standings = self.fetch_team_standings_improved(away_team_id, league_id, season)
+                            second_standings = self.fetch_team_standings_improved(home_team_id, league_id, season)
+                        
+                        Clock.schedule_once(lambda dt: self.update_popup_stats(
+                            popup, first_stats, second_stats, 
+                            first_name_display, second_name_display,
+                            first_standings, second_standings
+                        ), 0)
+                        
+                    except Exception as e:
+                        print(f"❌ خطأ في جلب الإحصائيات: {e}")
+                        Clock.schedule_once(lambda dt: self.update_popup_stats(
+                            popup, "green:0:0", "green:0:0",
+                            popup.home_team_name, popup.away_team_name,
+                            None, None
+                        ), 0)
+                        
+                threading.Thread(target=fetch_stats, daemon=True).start()
+                
         except Exception as e:
-            print(f"❌ Error saving stats to cache: {e}")
+            print(f"❌ خطأ في تحميل الإحصائيات: {e}")
 
     def load_favorites(self):
         self.favorites = self.storage.load_favorites()
@@ -2655,7 +2256,7 @@ class ProfessionalFootballApp(MDApp):
             # تطبيق الفلترات بالتسلسل
             final_matches_filtered = []
             
-            # أولاً: فلتر NS Perfect 1_1 (تستخدم الكاش فقط)
+            # فلتر NS Perfect 1_1 (تستخدم API فقط)
             if self.filter_ns_perfect_1_1_enabled:
                 print(f"🎯 تطبيق فلتر NS Perfect 1_1 على {len(filtered_matches)} مباراة")
                 temp_filtered = []
@@ -2667,23 +2268,6 @@ class ProfessionalFootballApp(MDApp):
                 filtered_matches = temp_filtered
                 print(f"🎯 بعد تطبيق فلتر NS Perfect 1_1: {len(filtered_matches)} مباراة")
             
-            # ثانياً: فلتر Perfect2_2 (تستخدم API فقط)
-            if self.filter_perfect2_2_enabled:
-                print(f"🎯 تطبيق فلتر Perfect2_2 على {len(filtered_matches)} مباراة")
-                temp_filtered = []
-                for match in filtered_matches:
-                    # Perfect2_2 تعمل فقط على المباريات المجدولة (NS/TBD)
-                    if match.get('status', 'NS') in ['NS', 'TBD']:
-                        filter_result = self.apply_perfect2_2_to_calendar(match)
-                        if filter_result and "✅ yes" in filter_result:
-                            temp_filtered.append(match)
-                            print(f"✅ Perfect2_2: {match.get('home_team')} vs {match.get('away_team')}")
-                    else:
-                        # المباريات غير المجدولة تمرر بدون فلترة Perfect2_2
-                        temp_filtered.append(match)
-                filtered_matches = temp_filtered
-                print(f"🎯 بعد تطبيق فلتر Perfect2_2: {len(filtered_matches)} مباراة")
-            
             # إزالة المفضلة والمخفية
             final_matches = self.filter_out_hidden_and_favorite_matches(filtered_matches)
             print(f"🚫 النتيجة النهائية: {len(final_matches)} مباراة مجدولة")
@@ -2692,9 +2276,7 @@ class ProfessionalFootballApp(MDApp):
                 # عرض معلومات الفلترات النشطة
                 filter_info = []
                 if self.filter_ns_perfect_1_1_enabled:
-                    filter_info.append("NS Perfect 1_1 (Cache)")
-                if self.filter_perfect2_2_enabled:
-                    filter_info.append("Perfect2_2 (API)")
+                    filter_info.append("NS Perfect 1_1 (API)")
                 
                 if filter_info:
                     filter_label = MDLabel(
@@ -2726,9 +2308,7 @@ class ProfessionalFootballApp(MDApp):
                     no_matches_text += " with current league filters"
                 filter_texts = []
                 if self.filter_ns_perfect_1_1_enabled:
-                    filter_texts.append("NS Perfect 1_1 (Cache)")
-                if self.filter_perfect2_2_enabled:
-                    filter_texts.append("Perfect2_2 (API)")
+                    filter_texts.append("NS Perfect 1_1 (API)")
                 if filter_texts:
                     no_matches_text += f" and filters: {' + '.join(filter_texts)}"
                 self.show_empty_message(no_matches_text)
@@ -2754,15 +2334,8 @@ class ProfessionalFootballApp(MDApp):
             from kivy.core.window import Window
             Window.add_widget(popup)
             
-            # 1. محاولة جلب البيانات من الكاش أولاً
-            cached_data = self.get_match_stats_from_cache(match_data)
-            
-            if cached_data:
-                # استخدام البيانات من الكاش
-                Clock.schedule_once(lambda dt: self.load_popup_from_cache_or_api(match_data, popup, cached_data), 0.1)
-            else:
-                # 2. إذا لم تكن في الكاش، جلب من API
-                Clock.schedule_once(lambda dt: self.load_popup_statistics_from_api(match_data, popup), 0.1)
+            # جلب البيانات مباشرة من API
+            Clock.schedule_once(lambda dt: self.load_popup_statistics_from_api(match_data, popup), 0.1)
             
             anim = Animation(opacity=1, duration=0.3)
             anim.start(popup)
@@ -2772,163 +2345,6 @@ class ProfessionalFootballApp(MDApp):
         except Exception as e:
             print(f"❌ Error showing stats popup: {e}")
             self.show_snackbar("⚠️ خطأ في فتح الإحصائيات")
-    
-    def load_popup_from_cache_or_api(self, match_data, popup, cached_data):
-        """تحميل البيانات من الكاش أو API"""
-        try:
-            if cached_data.get('from_perfect2_2'):
-                # تحميل من كاش Perfect2_2
-                self.load_popup_from_cache(match_data, popup, cached_data['cache_data'])
-            else:
-                # تحميل من كاش الإحصائيات العامة
-                self.load_popup_from_general_cache(match_data, popup, cached_data)
-                
-        except Exception as e:
-            print(f"❌ Error loading from cache: {e}")
-            # في حالة الخطأ، نعود للطريقة العادية
-            self.load_popup_statistics_from_api(match_data, popup)
-    
-    def load_popup_from_general_cache(self, match_data, popup, cached_data):
-        """تحميل البيانات من الكاش العام"""
-        try:
-            home_team_name = match_data.get('full_home_team', match_data.get('home_team', ''))
-            away_team_name = match_data.get('full_away_team', match_data.get('away_team', ''))
-            
-            popup.from_cache = True
-            
-            # استخراج البيانات المخزنة
-            home_stats = cached_data.get('home_stats', {})
-            away_stats = cached_data.get('away_stats', {})
-            home_standings = cached_data.get('home_standings', {})
-            away_standings = cached_data.get('away_standings', {})
-            
-            # تحديد ترتيب الفرق بناءً على الأهداف
-            home_goals_for = home_stats.get('goals_for', 0) if isinstance(home_stats, dict) else 0
-            away_goals_for = away_stats.get('goals_for', 0) if isinstance(away_stats, dict) else 0
-            
-            if home_goals_for >= away_goals_for:
-                first_team_role = 'home'
-                second_team_role = 'away'
-            else:
-                first_team_role = 'away'
-                second_team_role = 'home'
-            
-            if first_team_role == 'home':
-                popup.first_team_name_display = home_team_name
-                popup.second_team_name_display = away_team_name
-                
-                # تعيين الإحصائيات
-                if isinstance(home_stats, dict):
-                    popup.first_team_goals_for = str(home_stats.get('goals_for', 0))
-                    popup.first_team_goals_against = str(home_stats.get('goals_against', 0))
-                    popup.first_team_color = home_stats.get('color', 'green')
-                
-                if isinstance(away_stats, dict):
-                    popup.second_team_goals_for = str(away_stats.get('goals_for', 0))
-                    popup.second_team_goals_against = str(away_stats.get('goals_against', 0))
-                    popup.second_team_color = away_stats.get('color', 'green')
-                
-                # تعيين الترتيب
-                if isinstance(home_standings, dict):
-                    popup.first_team_current_rank = str(home_standings.get('current_rank', 'N/A'))
-                    popup.first_team_last_rank = str(home_standings.get('last_rank', 'N/A'))
-                
-                if isinstance(away_standings, dict):
-                    popup.second_team_current_rank = str(away_standings.get('current_rank', 'N/A'))
-                    popup.second_team_last_rank = str(away_standings.get('last_rank', 'N/A'))
-            else:
-                popup.first_team_name_display = away_team_name
-                popup.second_team_name_display = home_team_name
-                
-                # تعيين الإحصائيات
-                if isinstance(away_stats, dict):
-                    popup.first_team_goals_for = str(away_stats.get('goals_for', 0))
-                    popup.first_team_goals_against = str(away_stats.get('goals_against', 0))
-                    popup.first_team_color = away_stats.get('color', 'green')
-                
-                if isinstance(home_stats, dict):
-                    popup.second_team_goals_for = str(home_stats.get('goals_for', 0))
-                    popup.second_team_goals_against = str(home_stats.get('goals_against', 0))
-                    popup.second_team_color = home_stats.get('color', 'green')
-                
-                # تعيين الترتيب
-                if isinstance(away_standings, dict):
-                    popup.first_team_current_rank = str(away_standings.get('current_rank', 'N/A'))
-                    popup.first_team_last_rank = str(away_standings.get('last_rank', 'N/A'))
-                
-                if isinstance(home_standings, dict):
-                    popup.second_team_current_rank = str(home_standings.get('current_rank', 'N/A'))
-                    popup.second_team_last_rank = str(home_standings.get('last_rank', 'N/A'))
-            
-            print(f"✅ Loaded popup data from general cache for match {match_data.get('id')}")
-            
-        except Exception as e:
-            print(f"❌ Error loading from general cache: {e}")
-            raise
-    
-    def load_popup_from_cache(self, match_data, popup, cached_data):
-        """تحميل البيانات من كاش Perfect2_2"""
-        try:
-            home_team_name = match_data.get('full_home_team', match_data.get('home_team', ''))
-            away_team_name = match_data.get('full_away_team', match_data.get('away_team', ''))
-            
-            popup.from_cache = True
-            popup.cache_data = cached_data
-            
-            # استخراج بيانات الأهداف من الكاش
-            home_goals_for = cached_data.get('home_goals_last3', 0)
-            home_goals_against = cached_data.get('home_goals_against_last3', 0)
-            away_goals_for = cached_data.get('away_goals_last3', 0)
-            away_goals_against = cached_data.get('away_goals_against_last3', 0)
-            
-            # تحديد ترتيب الفرق بناءً على الأهداف المسجلة
-            if home_goals_for >= away_goals_for:
-                first_team_role = 'home'
-                second_team_role = 'away'
-            else:
-                first_team_role = 'away'
-                second_team_role = 'home'
-            
-            if first_team_role == 'home':
-                popup.first_team_name_display = home_team_name
-                popup.second_team_name_display = away_team_name
-                
-                popup.first_team_goals_for = str(home_goals_for)
-                popup.first_team_goals_against = str(home_goals_against)
-                popup.second_team_goals_for = str(away_goals_for)
-                popup.second_team_goals_against = str(away_goals_against)
-                
-                popup.first_team_current_rank = str(cached_data.get('home_rank_current', 'N/A'))
-                popup.first_team_last_rank = str(cached_data.get('home_rank_last', 'N/A'))
-                popup.second_team_current_rank = str(cached_data.get('away_rank_current', 'N/A'))
-                popup.second_team_last_rank = str(cached_data.get('away_rank_last', 'N/A'))
-            else:
-                popup.first_team_name_display = away_team_name
-                popup.second_team_name_display = home_team_name
-                
-                popup.first_team_goals_for = str(away_goals_for)
-                popup.first_team_goals_against = str(away_goals_against)
-                popup.second_team_goals_for = str(home_goals_for)
-                popup.second_team_goals_against = str(home_goals_against)
-                
-                popup.first_team_current_rank = str(cached_data.get('away_rank_current', 'N/A'))
-                popup.first_team_last_rank = str(cached_data.get('away_rank_last', 'N/A'))
-                popup.second_team_current_rank = str(cached_data.get('home_rank_current', 'N/A'))
-                popup.second_team_last_rank = str(cached_data.get('home_rank_last', 'N/A'))
-            
-            # تحديد الألوان بناءً على الأداء
-            popup.first_team_color = self._determine_color_based_on_performance(
-                popup.first_team_goals_for, popup.first_team_goals_against
-            )
-            popup.second_team_color = self._determine_color_based_on_performance(
-                popup.second_team_goals_for, popup.second_team_goals_against
-            )
-            
-            print(f"✅ Loaded popup data from Perfect2_2 cache for match {match_data.get('id')}")
-            
-        except Exception as e:
-            print(f"❌ Error loading popup from cache: {e}")
-            raise
     
     def _determine_color_based_on_performance(self, goals_for_str, goals_against_str):
         """تحديد اللون بناءً على الأداء"""
@@ -2945,83 +2361,6 @@ class ProfessionalFootballApp(MDApp):
         except:
             return "green"
     
-    def load_popup_statistics_from_api(self, match_data, popup):
-        """جلب الإحصائيات من API وحفظها في الكاش"""
-        try:
-            home_team_id = match_data.get('home_team_id')
-            away_team_id = match_data.get('away_team_id')
-            league_id = match_data.get('league_id')
-            season = match_data.get('season', datetime.now().year)
-            
-            if home_team_id and away_team_id and league_id:
-                def fetch_stats():
-                    try:
-                        first_team_role, second_team_role = self.determine_team_order(match_data)
-                        
-                        if first_team_role == 'home':
-                            first_stats = self.fetch_team_last_matches_improved(home_team_id, league_id, season, is_home_team=True)
-                            second_stats = self.fetch_team_last_matches_improved(away_team_id, league_id, season, is_home_team=False)
-                            first_name_display = popup.home_team_name 
-                            second_name_display = popup.away_team_name
-                            
-                            first_standings = self.fetch_team_standings_improved(home_team_id, league_id, season)
-                            second_standings = self.fetch_team_standings_improved(away_team_id, league_id, season)
-                        else:
-                            first_stats = self.fetch_team_last_matches_improved(away_team_id, league_id, season, is_home_team=False)
-                            second_stats = self.fetch_team_last_matches_improved(home_team_id, league_id, season, is_home_team=True)
-                            first_name_display = popup.away_team_name
-                            second_name_display = popup.home_team_name
-                            
-                            first_standings = self.fetch_team_standings_improved(away_team_id, league_id, season)
-                            second_standings = self.fetch_team_standings_improved(home_team_id, league_id, season)
-                        
-                        # تحويل الإحصائيات إلى تنسيق قابل للتخزين
-                        home_stats = self._parse_stats_to_dict(first_stats if first_team_role == 'home' else second_stats)
-                        away_stats = self._parse_stats_to_dict(second_stats if first_team_role == 'home' else first_stats)
-                        
-                        # حفظ في الكاش
-                        self.save_match_stats_to_cache(
-                            match_data, 
-                            home_stats, 
-                            away_stats, 
-                            first_standings if first_team_role == 'home' else second_standings,
-                            second_standings if first_team_role == 'home' else first_standings
-                        )
-                        
-                        Clock.schedule_once(lambda dt: self.update_popup_stats(
-                            popup, first_stats, second_stats, 
-                            first_name_display, second_name_display,
-                            first_standings, second_standings
-                        ), 0)
-                        
-                    except Exception as e:
-                        print(f"❌ خطأ في جلب الإحصائيات: {e}")
-                        Clock.schedule_once(lambda dt: self.update_popup_stats(
-                            popup, "green:0:0", "green:0:0",
-                            popup.home_team_name, popup.away_team_name,
-                            None, None
-                        ), 0)
-                        
-                threading.Thread(target=fetch_stats, daemon=True).start()
-                
-        except Exception as e:
-            print(f"❌ خطأ في تحميل الإحصائيات: {e}")
-
-    def _parse_stats_to_dict(self, stats_str):
-        """تحويل سلسلة الإحصائيات إلى قاموس"""
-        try:
-            if stats_str and ":" in stats_str:
-                parts = stats_str.split(":")
-                if len(parts) == 3:
-                    return {
-                        'color': parts[0],
-                        'goals_for': parts[1],
-                        'goals_against': parts[2]
-                    }
-            return {'color': 'green', 'goals_for': '0', 'goals_against': '0'}
-        except:
-            return {'color': 'green', 'goals_for': '0', 'goals_against': '0'}
-
     def fetch_team_last_matches_improved(self, team_id, league_id, season, is_home_team):
         try:
             url = f"{self.base_url}/fixtures"
@@ -3984,7 +3323,6 @@ class ProfessionalFootballApp(MDApp):
         matches_count = len(self.favorites)
         leagues_count = len(self.favorite_leagues)
         hidden_count = len(self.hidden_matches)
-        perfect2_2_count = len(self.perfect2_2_cache)
         
         stats_box.add_widget(MDLabel(
             text=f"Favorite matches: {matches_count}",
@@ -4001,11 +3339,6 @@ class ProfessionalFootballApp(MDApp):
             theme_text_color='Primary',
             halign='center'
         ))
-        stats_box.add_widget(MDLabel(
-            text=f"Perfect2_2 cached: {perfect2_2_count}",
-            theme_text_color='Primary',
-            halign='center'
-        ))
         
         container.add_widget(stats_box)
         
@@ -4014,41 +3347,6 @@ class ProfessionalFootballApp(MDApp):
         container.add_widget(filter_header)
         
         filter_buttons_box = MDBoxLayout(orientation='vertical', spacing=dp(10), size_hint_y=None, height=dp(320))
-        
-        # فلتر Perfect2_2
-        btn_perfect2_2 = MDBoxLayout(
-            orientation='horizontal',
-            size_hint_y=None,
-            height=dp(40),
-            padding=dp(5),
-            spacing=dp(10)
-        )
-        btn_perfect2_2_label = MDLabel(
-            text="🎯 Perfect2_2 Filter (Calendar & Finished)",
-            theme_text_color='Primary',
-            halign='left',
-            valign='center',
-            size_hint_x=0.8
-        )
-        btn_perfect2_2_icon = MDIconButton(
-            icon= "checkbox-marked" if self.filter_perfect2_2_enabled else "checkbox-blank-outline",
-            theme_text_color='Custom',
-            text_color=get_color_from_hex("#4CAF50") if self.filter_perfect2_2_enabled else get_color_from_hex("#757575"),
-            on_release=lambda x: self.toggle_filter_perfect2_2(),
-            size_hint_x=0.2
-        )
-        btn_perfect2_2.add_widget(btn_perfect2_2_label)
-        btn_perfect2_2.add_widget(btn_perfect2_2_icon)
-        filter_buttons_box.add_widget(btn_perfect2_2)
-        
-        # زر لعرض الكاش المخزن
-        btn_view_cache = MDRaisedButton(
-            text="📊 View Perfect2_2 Cache",
-            on_release=lambda x: self.show_perfect2_2_cached_matches(),
-            size_hint_y=None,
-            height=dp(40)
-        )
-        filter_buttons_box.add_widget(btn_view_cache)
         
         # فلتر NS Perfect 1_1
         btn_ns_filter = MDBoxLayout(
@@ -4135,7 +3433,6 @@ class ProfessionalFootballApp(MDApp):
         """إعادة تعيين جميع الفلترات"""
         self.reset_filter()
         self.filter_ns_perfect_1_1_enabled = False
-        self.filter_perfect2_2_enabled = False
         
         self.save_filter_state()
         
