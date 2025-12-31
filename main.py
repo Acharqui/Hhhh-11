@@ -267,17 +267,132 @@ class SQLiteStorage:
                     match_date TEXT,
                     league_id INTEGER,
                     match_data TEXT,
-                    cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(match_date, league_id)
+                )
+            """)
+
+            # ⭐ جدول جديد: كاش الترتيب الحالي للدوريات (دائم بدون صلاحية)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS league_standings_cache (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    league_id INTEGER,
+                    season INTEGER,
+                    standings_data TEXT,
+                    UNIQUE(league_id, season)
+                )
+            """)
+
+            # ⭐ جدول جديد: كاش ترتيب الموسم الماضي (دائم بدون صلاحية)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS last_season_standings_cache (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    team_id INTEGER,
+                    league_id INTEGER,
+                    season INTEGER,
+                    standings_data TEXT,
+                    UNIQUE(team_id, league_id, season)
                 )
             """)
 
             conn.commit()
             conn.close()
-            print("✅ Database initialized successfully with PERMANENT scheduled matches cache")
+            print("✅ Database initialized successfully with league standings cache")
 
         except Exception as e:
             print(f"❌ DB init error: {e}")
+
+    def save_league_standings_to_cache(self, league_id, season, standings_data):
+        """حفظ ترتيب الدوري في الكاش الدائم"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # تحويل البيانات إلى JSON
+            json_data = json.dumps(standings_data)
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO league_standings_cache 
+                (league_id, season, standings_data)
+                VALUES (?, ?, ?)
+            ''', (league_id, season, json_data))
+            
+            conn.commit()
+            conn.close()
+            print(f"✅ تم حفظ ترتيب الدوري {league_id} للموسم {season} في الكاش الدائم")
+            return True
+        except Exception as e:
+            print(f"❌ خطأ في حفظ كاش الترتيب: {e}")
+            return False
+
+    def load_league_standings_from_cache(self, league_id, season):
+        """تحميل ترتيب الدوري من الكاش الدائم"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT standings_data FROM league_standings_cache
+                WHERE league_id = ? AND season = ?
+            ''', (league_id, season))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row:
+                standings_data = json.loads(row[0])
+                print(f"✅ تم تحميل ترتيب الدوري {league_id} للموسم {season} من الكاش الدائم")
+                return standings_data
+            
+            return None
+        except Exception as e:
+            print(f"❌ خطأ في تحميل كاش الترتيب: {e}")
+            return None
+
+    def save_last_season_standings_to_cache(self, team_id, league_id, season, standings_data):
+        """حفظ ترتيب الموسم الماضي في الكاش الدائم"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            json_data = json.dumps(standings_data)
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO last_season_standings_cache 
+                (team_id, league_id, season, standings_data)
+                VALUES (?, ?, ?, ?)
+            ''', (team_id, league_id, season, json_data))
+            
+            conn.commit()
+            conn.close()
+            print(f"✅ تم حفظ ترتيب الموسم الماضي للفريق {team_id} في الكاش الدائم")
+            return True
+        except Exception as e:
+            print(f"❌ خطأ في حفظ كاش الموسم الماضي: {e}")
+            return False
+
+    def load_last_season_standings_from_cache(self, team_id, league_id, season):
+        """تحميل ترتيب الموسم الماضي من الكاش الدائم"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT standings_data FROM last_season_standings_cache
+                WHERE team_id = ? AND league_id = ? AND season = ?
+            ''', (team_id, league_id, season))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row:
+                standings_data = json.loads(row[0])
+                print(f"✅ تم تحميل ترتيب الموسم الماضي للفريق {team_id} من الكاش الدائم")
+                return standings_data
+            
+            return None
+        except Exception as e:
+            print(f"❌ خطأ في تحميل كاش الموسم الماضي: {e}")
+            return None
 
     def save_scheduled_matches_to_cache(self, match_date, league_id, match_data):
         """حفظ المباريات المجدولة في الكاش بشكل دائم"""
@@ -290,8 +405,8 @@ class SQLiteStorage:
             
             cursor.execute('''
                 INSERT OR REPLACE INTO scheduled_matches_cache 
-                (match_date, league_id, match_data, cached_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                (match_date, league_id, match_data)
+                VALUES (?, ?, ?)
             ''', (match_date, league_id, json_data))
             
             conn.commit()
@@ -327,26 +442,9 @@ class SQLiteStorage:
             return None
 
     def clear_old_scheduled_cache(self, days_old=30):
-        """مسح الكاش القديم جداً (اختياري)"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                DELETE FROM scheduled_matches_cache 
-                WHERE date(cached_at) < date('now', ?)
-            ''', (f'-{days_old} days',))
-            
-            deleted = cursor.rowcount
-            conn.commit()
-            conn.close()
-            
-            if deleted > 0:
-                print(f"✅ تم مسح {deleted} سجل قديم من كاش المباريات المجدولة")
-            return deleted
-        except Exception as e:
-            print(f"❌ خطأ في مسح الكاش القديم: {e}")
-            return 0
+        """مسح الكاش القديم جداً (غير مستخدم - الكاش دائم)"""
+        print("⚠️ هذه الدالة غير مستخدمة - الكاش دائم بدون صلاحية")
+        return 0
 
     # دوال المباريات المفضلة
     def load_favorites(self):
@@ -552,6 +650,36 @@ class SQLiteStorage:
             return exists
         except:
             return False
+
+    def clear_specific_cache(self, tables=None):
+        """مسح جداول كاش محددة فقط"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cleared_tables = []
+            
+            # جدول المباريات المجدولة
+            if tables is None or 'scheduled_matches_cache' in tables:
+                cursor.execute('DELETE FROM scheduled_matches_cache')
+                cleared_tables.append('scheduled_matches_cache')
+                print(f"✅ تم مسح جدول scheduled_matches_cache")
+            
+            # جدول ترتيب الدوريات الحالي
+            if tables is None or 'league_standings_cache' in tables:
+                cursor.execute('DELETE FROM league_standings_cache')
+                cleared_tables.append('league_standings_cache')
+                print(f"✅ تم مسح جدول league_standings_cache")
+            
+            conn.commit()
+            conn.close()
+            
+            print(f"✅ تم مسح {len(cleared_tables)} جدول من الكاش")
+            return True, cleared_tables
+            
+        except Exception as e:
+            print(f"❌ خطأ في مسح الكاش: {e}")
+            return False, []
 
 
 class CalendarHeader(MDBoxLayout):
@@ -1702,7 +1830,6 @@ class ProfessionalFootballApp(MDApp):
             league_id = match_data.get('league_id')
             season = match_data.get('season', datetime.now().year)
             
-            
             # جلب البيانات من API
             home_goals, home_count = self.fetch_team_last_goals_for_filter_from_api(
                 home_team_id, league_id, season, is_home_team=True, matches_count=3
@@ -1720,9 +1847,10 @@ class ProfessionalFootballApp(MDApp):
             if home_total_goals == away_total_goals:
                 result = f"✅ yes (Equal goals: {home_total_goals}-{away_total_goals})"
                 return result
-                
-            home_rank_current_data = self.fetch_team_standings_for_filter_from_api(home_team_id, league_id, season)
-            away_rank_current_data = self.fetch_team_standings_for_filter_from_api(away_team_id, league_id, season)
+            
+            # ⭐ استخدام كاش الترتيب من الكاش الدائم
+            home_rank_current_data = self.fetch_team_standings_with_cache(home_team_id, league_id, season)
+            away_rank_current_data = self.fetch_team_standings_with_cache(away_team_id, league_id, season)
             
             home_rank_current = home_rank_current_data.get('current_rank', 'N/A')
             away_rank_current = away_rank_current_data.get('current_rank', 'N/A')
@@ -1983,6 +2111,126 @@ class ProfessionalFootballApp(MDApp):
         except Exception as e:
             print(f"Error in fetch_team_standings_for_filter_from_api: {e}")
             return {'current_rank': 'N/A', 'points': 0, 'form': ''}
+
+    # ⭐ دالة محسنة لجلب الترتيب مع الكاش الدائم
+    def fetch_team_standings_with_cache(self, team_id, league_id, season):
+        """جلب ترتيب الفريق مع استخدام الكاش الدائم"""
+        try:
+            # 1. تحميل كل ترتيب الدوري من الكاش الدائم
+            all_standings = self.storage.load_league_standings_from_cache(league_id, season)
+            
+            if all_standings:
+                print(f"✅ استخدام الكاش الدائم لترتيب الدوري {league_id}")
+                # البحث عن الفريق المطلوب في بيانات الكاش
+                for team_data in all_standings:
+                    if team_data.get('team_id') == team_id:
+                        return team_data
+                
+                # إذا لم نجده في الكاش، نحتاج لطلب جديد
+                print(f"⚠️ الفريق {team_id} غير موجود في كاش الدوري {league_id}")
+            
+            # إذا لم يكن في الكاش، جلب جديد من API
+            print(f"🌐 جلب ترتيب جديد من API للدوري {league_id}")
+            team_standings = self._fetch_team_standings_from_api(team_id, league_id, season)
+            
+            if team_standings:
+                # جلب كل فرق الدوري من API وحفظها في الكاش الدائم
+                self._cache_all_league_standings(league_id, season)
+            
+            return team_standings or {'current_rank': 'N/A', 'points': 0, 'form': ''}
+            
+        except Exception as e:
+            print(f"Error fetching team standings with cache: {e}")
+            return {'current_rank': 'N/A', 'points': 0, 'form': ''}
+
+    def _fetch_team_standings_from_api(self, team_id, league_id, season):
+        """جلب ترتيب فريق محدد من API"""
+        try:
+            url = f"{self.base_url}/standings"
+            params = {
+                'league': league_id,
+                'season': season
+            }
+            
+            response = requests.get(url, headers=self.headers, params=params, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                standings = data.get('response', [])
+                
+                if standings:
+                    league_standings = standings[0].get('league', {}).get('standings', [])
+
+                    for standing_group in league_standings:
+                        for team_standing in standing_group:
+                            if team_standing.get('team', {}).get('id') == team_id:
+                                return {
+                                    'team_id': team_id,
+                                    'current_rank': team_standing.get('rank'),
+                                    'points': team_standing.get('points'),
+                                    'form': team_standing.get('form'),
+                                    'played': team_standing.get('all', {}).get('played', 0),
+                                    'won': team_standing.get('all', {}).get('win', 0),
+                                    'draw': team_standing.get('all', {}).get('draw', 0),
+                                    'lost': team_standing.get('all', {}).get('lose', 0)
+                                }
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error in _fetch_team_standings_from_api: {e}")
+            return None
+
+    def _cache_all_league_standings(self, league_id, season):
+        """جلب وحفظ كل ترتيب الدوري في الكاش الدائم"""
+        try:
+            print(f"🔄 جلب جميع فرق الدوري {league_id} للموسم {season} لحفظها في الكاش الدائم")
+            
+            url = f"{self.base_url}/standings"
+            params = {
+                'league': league_id,
+                'season': season
+            }
+            
+            response = requests.get(url, headers=self.headers, params=params, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                standings = data.get('response', [])
+                
+                if standings:
+                    league_data = standings[0].get('league', {})
+                    league_standings = league_data.get('standings', [])
+                    
+                    all_teams_data = []
+                    
+                    for standing_group in league_standings:
+                        for team_standing in standing_group:
+                            team_data = {
+                                'team_id': team_standing.get('team', {}).get('id'),
+                                'team_name': team_standing.get('team', {}).get('name'),
+                                'current_rank': team_standing.get('rank'),
+                                'points': team_standing.get('points'),
+                                'form': team_standing.get('form'),
+                                'played': team_standing.get('all', {}).get('played', 0),
+                                'won': team_standing.get('all', {}).get('win', 0),
+                                'draw': team_standing.get('all', {}).get('draw', 0),
+                                'lost': team_standing.get('all', {}).get('lose', 0),
+                                'goals_for': team_standing.get('all', {}).get('goals', {}).get('for', 0),
+                                'goals_against': team_standing.get('all', {}).get('goals', {}).get('against', 0)
+                            }
+                            all_teams_data.append(team_data)
+                    
+                    # حفظ في الكاش الدائم
+                    self.storage.save_league_standings_to_cache(league_id, season, all_teams_data)
+                    print(f"✅ تم حفظ {len(all_teams_data)} فريق في كاش الدوري {league_id}")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"Error caching all league standings: {e}")
+            return False
 
     def load_favorites(self):
         self.favorites = self.storage.load_favorites()
@@ -2267,11 +2515,13 @@ class ProfessionalFootballApp(MDApp):
                         first_team_role, second_team_role = self.determine_team_order(match_data)
                         
                         if first_team_role == 'home':
+                            # ✅ الأهداف: API مباشرة (لا يوجد كاش)
                             first_stats = self.fetch_team_last_matches_improved(home_team_id, league_id, season, is_home_team=True)
                             second_stats = self.fetch_team_last_matches_improved(away_team_id, league_id, season, is_home_team=False)
                             first_name_display = popup.home_team_name 
                             second_name_display = popup.away_team_name
                             
+                            # ⭐ الترتيب: كاش دائم أولاً
                             first_standings = self.fetch_team_standings_improved(home_team_id, league_id, season)
                             second_standings = self.fetch_team_standings_improved(away_team_id, league_id, season)
                         else:
@@ -2358,15 +2608,18 @@ class ProfessionalFootballApp(MDApp):
             print(f"❌ Error in fetch_team_last_matches: {e}")
             return "green:0:0"
 
+    # ⭐ دالة محسنة لجلب ترتيب الفريق مع الكاش الدائم للموسم الماضي
     def fetch_team_standings_improved(self, team_id, league_id, season):
         try:
-            current_season = season
-            last_season = season - 1
+            # 1. الترتيب الحالي (من الكاش الدائم)
+            current_standings = self.fetch_team_standings_with_cache(team_id, league_id, season)
             
-            current_standings = self._fetch_season_standings(team_id, league_id, current_season)
-            last_standings = self._fetch_season_standings(team_id, league_id, last_season)
+            # 2. الترتيب الموسم الماضي (كاش دائم)
+            last_season = season - 1
+            last_standings = self._fetch_last_season_standings_with_cache(team_id, league_id, last_season)
             
             if not last_standings:
+                # إذا لم يلعب في نفس الدوري الموسم الماضي
                 last_standings = self._find_team_in_all_leagues_last_season(team_id, last_season)
             
             last_rank_display, last_rank_type = self._determine_last_rank_display(last_standings, current_standings)
@@ -2376,7 +2629,7 @@ class ProfessionalFootballApp(MDApp):
                 'last_rank': last_rank_display,
                 'last_rank_type': last_rank_type,
                 'played': current_standings.get('played', 'N/A') if current_standings else 'N/A',
-                'current_season': current_season,
+                'current_season': season,
                 'last_season': last_season
             }
             
@@ -2392,6 +2645,127 @@ class ProfessionalFootballApp(MDApp):
                 'current_season': season,
                 'last_season': season - 1
             }
+
+    def _fetch_last_season_standings_with_cache(self, team_id, league_id, season):
+        """جلب ترتيب الموسم الماضي من الكاش الدائم"""
+        # 1. تحقق من الكاش الدائم أولاً
+        cached_data = self.storage.load_last_season_standings_from_cache(team_id, league_id, season)
+        if cached_data:
+            return cached_data
+        
+        # 2. إذا لم يكن في الكاش، جلب من API
+        standings = self._fetch_season_standings(team_id, league_id, season)
+        
+        if not standings:
+            # 3. إذا لم يلعب في نفس الدوري، ابحث في جميع الدوريات
+            standings = self._find_team_in_all_leagues_last_season(team_id, season)
+        
+        # 4. إذا حصلنا على بيانات، احفظها في الكاش الدائم
+        if standings:
+            self.storage.save_last_season_standings_to_cache(
+                team_id, league_id, season, standings
+            )
+        
+        return standings
+
+    def _fetch_season_standings(self, team_id, league_id, season):
+        """جلب ترتيب فريق محدد من API لموسم معين"""
+        try:
+            url = f"{self.base_url}/standings"
+            params = {
+                'league': league_id,
+                'season': season,
+                'team': team_id
+            }
+            
+            response = self.fetch_with_retry(url, params)
+            
+            if response and response.status_code == 200:
+                data = response.json()
+                
+                if data.get('response'):
+                    standings_data = data['response'][0]
+                    league_standings = standings_data.get('league', {}).get('standings', [])
+                    
+                    if league_standings and len(league_standings) > 0:
+                        for standing_group in league_standings:
+                            for team_standing in standing_group:
+                                if team_standing.get('team', {}).get('id') == team_id:
+                                    return {
+                                        'current_rank': team_standing.get('rank', 'N/A'),
+                                        'points': team_standing.get('points', 'N/A'),
+                                        'played': team_standing.get('all', {}).get('played', 'N/A'),
+                                        'won': team_standing.get('all', {}).get('win'),
+                                        'draw': team_standing.get('all', {}).get('draw'),
+                                        'lost': team_standing.get('all', {}).get('lose'),
+                                        'season': season,
+                                        'league_id': league_id,
+                                        'team_id': team_id,
+                                        'team_name': team_standing.get('team', {}).get('name', '')
+                                    }
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error fetching season standings: {e}")
+            return None
+
+    def _find_team_in_all_leagues_last_season(self, team_id, last_season):
+        """البحث عن الفريق في جميع الدوريات الموسم الماضي"""
+        try:
+            url = f"{self.base_url}/leagues"
+            params = {'team': team_id, 'season': last_season}
+            
+            response = self.fetch_with_retry(url, params)
+            
+            if response and response.status_code == 200:
+                data = response.json()
+                if data.get('response'):
+                    for league_data in data['response']:
+                        league_info = league_data.get('league', {})
+                        league_id = league_info.get('id')
+                        
+                        standings = self._fetch_season_standings(team_id, league_id, last_season)
+                        if standings:
+                            # حفظ في الكاش الدائم
+                            self.storage.save_last_season_standings_to_cache(
+                                team_id, league_id, last_season, standings
+                            )
+                            return standings
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error finding team in all leagues: {e}")
+            return None
+
+    def _determine_last_rank_display(self, last_standings, current_standings):
+        if not last_standings:
+            return "N/A", "normal"
+        
+        last_rank = last_standings.get('current_rank', 'N/A')
+        last_league = last_standings.get('league_name', '')
+        current_league = current_standings.get('league_name', '') if current_standings else ''
+        
+        if last_league == current_league:
+            return str(last_rank), "normal"
+        
+        if last_rank == 'N/A':
+            return "NEW", "new_team"
+        
+        if last_league != current_league:
+            try:
+                rank_int = int(last_rank)
+                if 1 <= rank_int <= 6:
+                    return f"↑{last_rank}", "promoted_green"
+                elif 6 < rank_int <= 20:
+                    return f"↓{last_rank}", "relegated_red"
+                else:
+                    return str(last_rank), "normal"
+            except:
+                return str(last_rank), "normal"
+        
+        return str(last_rank), "normal"
 
     def is_hidden(self, match_id):
         return any(m.get('id') == match_id for m in self.hidden_matches)
@@ -2698,109 +3072,6 @@ class ProfessionalFootballApp(MDApp):
         except Exception as e:
             print(f"Error in calculate_stats: {e}")
             return "green:0:0"
-
-    def _determine_last_rank_display(self, last_standings, current_standings):
-        if not last_standings:
-            return "N/A", "normal"
-        
-        last_rank = last_standings.get('current_rank', 'N/A')
-        last_league = last_standings.get('league_name', '')
-        current_league = current_standings.get('league_name', '') if current_standings else ''
-        
-        if last_league == current_league:
-            return str(last_rank), "normal"
-        
-        if last_rank == 'N/A':
-            return "NEW", "new_team"
-        
-        if last_league != current_league:
-            try:
-                rank_int = int(last_rank)
-                if 1 <= rank_int <= 6:
-                    return f"↑{last_rank}", "promoted_green"
-                elif 6 < rank_int <= 20:
-                    return f"↓{last_rank}", "relegated_red"
-                else:
-                    return str(last_rank), "normal"
-            except:
-                return str(last_rank), "normal"
-        
-        return str(last_rank), "normal"
-
-    def _find_team_in_all_leagues_last_season(self, team_id, last_season):
-        try:
-            url = f"{self.base_url}/leagues"
-            params = {
-                'team': team_id,
-                'season': last_season
-            }
-            
-            response = self.fetch_with_retry(url, params)
-            
-            if response and response.status_code == 200:
-                data = response.json()
-                if data.get('response'):
-                    for league_data in data['response']:
-                        league_info = league_data.get('league', {})
-                        league_id = league_info.get('id')
-                        league_name = league_info.get('name', '')
-                        
-                        standings = self._fetch_season_standings(team_id, league_id, last_season)
-                        if standings:
-                            standings['league_name'] = league_name
-                            return standings
-            
-            return None
-            
-        except Exception as e:
-            print(f"Error finding team in all leagues: {e}")
-            return None
-
-    def _fetch_season_standings(self, team_id, league_id, season):
-        try:
-            url = f"{self.base_url}/standings"
-            params = {
-                'league': league_id,
-                'season': season,
-                'team': team_id
-            }
-            
-            response = self.fetch_with_retry(url, params)
-            
-            if response and response.status_code == 200:
-                data = response.json()
-                
-                if data.get('response'):
-                    standings_data = data['response'][0]
-                    league_standings = standings_data.get('league', {}).get('standings', [])
-                    league_name = standings_data.get('league', {}).get('name', '')
-                    
-                    if league_standings and len(league_standings) > 0:
-                        for standing_group in league_standings:
-                            for team_standing in standing_group:
-                                if team_standing.get('team', {}).get('id') == team_id:
-                                    current_rank = team_standing.get('rank', 'N/A')
-                                    points = team_standing.get('points', 'N/A')
-                                    played = team_standing.get('all', {}).get('played', 'N/A')
-                                    
-                                    standings_info = {
-                                        'current_rank': str(current_rank),
-                                        'points': str(points),
-                                        'played': str(played),
-                                        'won': team_standing.get('all', {}).get('win'),
-                                        'draw': team_standing.get('all', {}).get('draw'),
-                                        'lost': team_standing.get('all', {}).get('lose'),
-                                        'season': season,
-                                        'league_name': league_name
-                                    }
-                                    
-                                    return standings_info
-            
-            return None
-            
-        except Exception as e:
-            print(f"Error fetching season standings: {e}")
-            return None
 
     def determine_team_order(self, match_data):
         home_score = match_data.get('home_score')
@@ -3299,6 +3570,34 @@ class ProfessionalFootballApp(MDApp):
         
         container.add_widget(stats_box)
         
+        # ⭐ زر مسح الكاش ⭐
+        cache_box = MDBoxLayout(
+            orientation='vertical', 
+            spacing=dp(5), 
+            size_hint_y=None, 
+            height=dp(80),
+            padding=dp(10)
+        )
+        
+        cache_label = MDLabel(
+            text="🗑️ CLEAR CACHE (Custom)",
+            theme_text_color='Primary',
+            halign='center',
+            bold=True
+        )
+        cache_box.add_widget(cache_label)
+        
+        clear_cache_btn = MDRaisedButton(
+            text="Clear Match & League Cache Only",
+            size_hint_y=None,
+            height=dp(40),
+            md_bg_color=get_color_from_hex("#FF5252"),
+            on_release=lambda x: self.show_clear_cache_dialog()
+        )
+        cache_box.add_widget(clear_cache_btn)
+        
+        container.add_widget(cache_box)
+        
         filter_header = OneLineListItem(text="🎯 ADVANCED FILTER SYSTEM")
         filter_header.md_bg_color = get_color_from_hex("#E1F5FE")
         container.add_widget(filter_header)
@@ -3385,6 +3684,66 @@ class ProfessionalFootballApp(MDApp):
         container.add_widget(OneLineListItem(text="📱 Version: 1.0.0"))
         container.add_widget(OneLineListItem(text="⚽ Football Live App"))
         container.add_widget(OneLineListItem(text="👨‍💻 Developed with KivyMD"))
+    
+    def show_clear_cache_dialog(self):
+        """عرض حوار تأكيد مسح الكاش"""
+        self.cache_dialog = MDDialog(
+            title="🗑️ Clear Cache Confirmation",
+            text="This will delete ONLY:\n\n• scheduled_matches_cache\n• league_standings_cache\n\n⚠️ Last season cache will NOT be affected\n⚠️ User data (favorites, hidden, etc.) will NOT be deleted",
+            buttons=[
+                MDFlatButton(
+                    text="Cancel",
+                    theme_text_color="Custom",
+                    text_color=get_color_from_hex("#757575"),
+                    on_release=lambda x: self.cache_dialog.dismiss()
+                ),
+                MDRaisedButton(
+                    text="Clear Selected Cache",
+                    md_bg_color=get_color_from_hex("#FF5252"),
+                    on_release=lambda x: self.execute_clear_cache()
+                )
+            ]
+        )
+        self.cache_dialog.open()
+    
+    def execute_clear_cache(self):
+        """تنفيذ مسح الكاش المحدد"""
+        try:
+            if hasattr(self, 'cache_dialog'):
+                self.cache_dialog.dismiss()
+            
+            # جداول الكاش المطلوب مسحها فقط
+            tables_to_clear = ['scheduled_matches_cache', 'league_standings_cache']
+            
+            success, cleared_tables = self.storage.clear_specific_cache(tables=tables_to_clear)
+            
+            if success:
+                self.show_snackbar(f"✅ Cache cleared: {', '.join(cleared_tables)}", duration=4)
+                
+                # تحقق أن الموسم الماضي لم يتم مسحه
+                try:
+                    conn = self.storage.get_connection()
+                    cursor = conn.cursor()
+                    
+                    # التحقق من وجود بيانات الموسم الماضي
+                    cursor.execute("SELECT COUNT(*) FROM last_season_standings_cache")
+                    last_season_count = cursor.fetchone()[0]
+                    
+                    conn.close()
+                    
+                    if last_season_count > 0:
+                        print(f"✅ Last season cache preserved: {last_season_count} records")
+                    else:
+                        print("ℹ️ No last season cache found")
+                        
+                except Exception as e:
+                    print(f"⚠️ Error checking last season cache: {e}")
+            else:
+                self.show_snackbar("❌ Failed to clear cache", duration=4)
+                
+        except Exception as e:
+            print(f"❌ Error in clear cache: {e}")
+            self.show_snackbar(f"❌ Error: {str(e)}", duration=4)
     
     def reset_all_filters(self):
         """إعادة تعيين جميع الفلترات"""
@@ -3597,13 +3956,7 @@ class ProfessionalFootballApp(MDApp):
 
     def default_filter_condition(self, match_data):
         return "❌ no"
-
-    def filter_condition_perfect_1_1(self, match_data):
-        if match_data.get('status', 'NS') == 'NS':
-             return "✅ yes"
         
-        return "❌ no"
-
     def filter_condition_1(self, match_data):
         try:
             home_score = match_data.get('home_score', 0)
