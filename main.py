@@ -260,17 +260,6 @@ class SQLiteStorage:
                 )
             """)
 
-            # ⭐ جدول جديد: كاش المباريات المجدولة (دائم بدون صلاحية)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS scheduled_matches_cache (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    match_date TEXT,
-                    league_id INTEGER,
-                    match_data TEXT,
-                    UNIQUE(match_date, league_id)
-                )
-            """)
-
             # ⭐ جدول جديد: كاش الترتيب الحالي للدوريات (دائم بدون صلاحية)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS league_standings_cache (
@@ -393,58 +382,6 @@ class SQLiteStorage:
         except Exception as e:
             print(f"❌ خطأ في تحميل كاش الموسم الماضي: {e}")
             return None
-
-    def save_scheduled_matches_to_cache(self, match_date, league_id, match_data):
-        """حفظ المباريات المجدولة في الكاش بشكل دائم"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            # تحويل البيانات إلى JSON
-            json_data = json.dumps(match_data)
-            
-            cursor.execute('''
-                INSERT OR REPLACE INTO scheduled_matches_cache 
-                (match_date, league_id, match_data)
-                VALUES (?, ?, ?)
-            ''', (match_date, league_id, json_data))
-            
-            conn.commit()
-            conn.close()
-            print(f"✅ تم حفظ {len(match_data)} مباراة في الكاش الدائم للتاريخ {match_date}")
-            return True
-        except Exception as e:
-            print(f"❌ خطأ في حفظ الكاش: {e}")
-            return False
-
-    def load_scheduled_matches_from_cache(self, match_date, league_id):
-        """تحميل المباريات المجدولة من الكاش الدائم"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT match_data FROM scheduled_matches_cache
-                WHERE match_date = ? AND league_id = ?
-            ''', (match_date, league_id))
-            
-            row = cursor.fetchone()
-            conn.close()
-            
-            if row:
-                match_data = json.loads(row[0])
-                print(f"✅ تم تحميل {len(match_data)} مباراة من الكاش الدائم")
-                return match_data
-            
-            return None
-        except Exception as e:
-            print(f"❌ خطأ في تحميل الكاش: {e}")
-            return None
-
-    def clear_old_scheduled_cache(self, days_old=30):
-        """مسح الكاش القديم جداً (غير مستخدم - الكاش دائم)"""
-        print("⚠️ هذه الدالة غير مستخدمة - الكاش دائم بدون صلاحية")
-        return 0
 
     # دوال المباريات المفضلة
     def load_favorites(self):
@@ -634,23 +571,6 @@ class SQLiteStorage:
         except:
             pass
 
-    def check_cache_exists(self, match_date, league_id):
-        """التحقق من وجود بيانات في الكاش"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT 1 FROM scheduled_matches_cache 
-                WHERE match_date = ? AND league_id = ? LIMIT 1
-            ''', (match_date, league_id))
-            
-            exists = cursor.fetchone() is not None
-            conn.close()
-            return exists
-        except:
-            return False
-
     def clear_specific_cache(self, tables=None):
         """مسح جداول كاش محددة فقط"""
         try:
@@ -658,12 +578,6 @@ class SQLiteStorage:
             cursor = conn.cursor()
             
             cleared_tables = []
-            
-            # جدول المباريات المجدولة
-            if tables is None or 'scheduled_matches_cache' in tables:
-                cursor.execute('DELETE FROM scheduled_matches_cache')
-                cleared_tables.append('scheduled_matches_cache')
-                print(f"✅ تم مسح جدول scheduled_matches_cache")
             
             # جدول ترتيب الدوريات الحالي
             if tables is None or 'league_standings_cache' in tables:
@@ -1660,93 +1574,48 @@ class ProfessionalFootballApp(MDApp):
         super().on_stop()
 
     def fetch_matches_by_date_improved(self, target_date):
-        """دالة محسنة: تستخدم الكاش أولاً، ثم API فقط إذا لزم الأمر"""
+        """دالة محسنة: تستخدم API مباشرة فقط"""
         try:
             date_str = target_date.strftime('%Y-%m-%d')
-            print(f"🔍 جاري البحث عن المباريات للتاريخ: {date_str}")
+            print(f"🔍 جاري البحث عن المباريات للتاريخ: {date_str} من API مباشرة")
             
             # 1️⃣ التحقق من الدوريات المطلوبة
             required_league_ids = self.get_required_league_ids()
             
-            all_cached_matches = []
-            leagues_needing_api = []
-            
-            # 2️⃣ محاولة جلب كل شيء من الكاش الدائم
-            if required_league_ids:
-                for league_id in required_league_ids:
-                    cached = self.storage.load_scheduled_matches_from_cache(date_str, league_id)
-                    if cached:
-                        all_cached_matches.extend(cached)
-                        print(f"✅ تم تحميل {len(cached)} مباراة من الكاش للدوري {league_id}")
-                    else:
-                        leagues_needing_api.append(league_id)
-                        print(f"⚠️ لا يوجد كاش للدوري {league_id}")
-            else:
-                # حالة خاصة: لا توجد فلترة دوريات، نتحقق من جميع الدوريات في الكاش
-                print("🔍 البحث في جميع دوريات الكاش...")
-                # نعتبر أننا بحاجة لـ API في هذه الحالة
-                leagues_needing_api = ["all"]
-            
-            # 3️⃣ إذا كان كل شيء في الكاش، نرجع البيانات مباشرة
-            if not leagues_needing_api and all_cached_matches:
-                print(f"🎯 النتيجة النهائية من الكاش فقط: {len(all_cached_matches)} مباراة")
-                return all_cached_matches
-            
-            # 4️⃣ إذا احتجنا إلى API
             matches_from_api = []
-            if leagues_needing_api:
-                if leagues_needing_api == ["all"]:
-                    # جلب كل المباريات من API
-                    print("🌐 جلب جميع المباريات من API...")
+            
+            # 2️⃣ جلب البيانات مباشرة من API
+            if required_league_ids:
+                print(f"🌐 جلب {len(required_league_ids)} دوري من API...")
+                for league_id in required_league_ids:
                     url = f"{self.base_url}/fixtures"
-                    params = {'date': date_str}
+                    params = {'date': date_str, 'league': league_id}
                     
-                    response = self.fetch_with_retry(url, params, max_retries=2)
+                    response = self.fetch_with_retry(url, params, max_retries=1)
                     if response and response.status_code == 200:
                         data = response.json()
                         if data.get('response'):
-                            api_matches = self.process_api_response_improved(data['response'])
-                            matches_from_api = api_matches
-                            
-                            # حفظ في الكاش لكل دوري
-                            matches_by_league = {}
-                            for match in api_matches:
-                                league_id = match.get('league_id')
-                                if league_id:
-                                    if league_id not in matches_by_league:
-                                        matches_by_league[league_id] = []
-                                    matches_by_league[league_id].append(match)
-                            
-                            for league_id, league_matches in matches_by_league.items():
-                                self.storage.save_scheduled_matches_to_cache(
-                                    date_str, league_id, league_matches
-                                )
-                else:
-                    # جلب فقط الدوريات المطلوبة من API
-                    print(f"🌐 جلب {len(leagues_needing_api)} دوري من API...")
-                    for league_id in leagues_needing_api:
-                        url = f"{self.base_url}/fixtures"
-                        params = {'date': date_str, 'league': league_id}
-                        
-                        response = self.fetch_with_retry(url, params, max_retries=1)
-                        if response and response.status_code == 200:
-                            data = response.json()
-                            if data.get('response'):
-                                league_matches = self.process_api_response_improved(data['response'])
-                                matches_from_api.extend(league_matches)
-                                
-                                # حفظ في الكاش
-                                self.storage.save_scheduled_matches_to_cache(
-                                    date_str, league_id, league_matches
-                                )
+                            league_matches = self.process_api_response_improved(data['response'])
+                            matches_from_api.extend(league_matches)
+                            print(f"✅ تم جلب {len(league_matches)} مباراة من API للدوري {league_id}")
+            else:
+                # جلب كل المباريات من API
+                print("🌐 جلب جميع المباريات من API...")
+                url = f"{self.base_url}/fixtures"
+                params = {'date': date_str}
+                
+                response = self.fetch_with_retry(url, params, max_retries=2)
+                if response and response.status_code == 200:
+                    data = response.json()
+                    if data.get('response'):
+                        api_matches = self.process_api_response_improved(data['response'])
+                        matches_from_api = api_matches
+                        print(f"✅ تم جلب {len(api_matches)} مباراة من API")
             
-            # 5️⃣ دمج النتائج
-            all_matches = all_cached_matches + matches_from_api
-            
-            # إزالة التكرارات
+            # 5️⃣ إزالة التكرارات
             unique_matches = []
             seen_ids = set()
-            for match in all_matches:
+            for match in matches_from_api:
                 match_id = match.get('id')
                 if match_id and match_id not in seen_ids:
                     seen_ids.add(match_id)
@@ -1755,16 +1624,12 @@ class ProfessionalFootballApp(MDApp):
             # 6️⃣ إزالة المباريات المخفية
             unique_matches = self.filter_out_hidden_matches_immediately(unique_matches)
             
-            print(f"📊 النتيجة النهائية: {len(unique_matches)} مباراة ({len(all_cached_matches)} من الكاش، {len(matches_from_api)} من API)")
+            print(f"📊 النتيجة النهائية من API: {len(unique_matches)} مباراة")
             
             return unique_matches
             
         except Exception as e:
             print(f"❌ خطأ في جلب المباريات: {e}")
-            # في حالة الخطأ، نعود للكاش الموجود
-            if 'all_cached_matches' in locals() and all_cached_matches:
-                print(f"🔄 الرجوع للكاش بسبب خطأ: {len(all_cached_matches)} مباراة")
-                return all_cached_matches
             return []
 
     def filter_out_hidden_matches_immediately(self, matches_list):
@@ -2126,19 +1991,16 @@ class ProfessionalFootballApp(MDApp):
                     if team_data.get('team_id') == team_id:
                         return team_data
                 
-                # إذا لم نجده في الكاش، نحتاج لطلب جديد
-                print(f"⚠️ الفريق {team_id} غير موجود في كاش الدوري {league_id}")
-            
-            # إذا لم يكن في الكاش، جلب جديد من API
-            print(f"🌐 جلب ترتيب جديد من API للدوري {league_id}")
-            team_standings = self._fetch_team_standings_from_api(team_id, league_id, season)
-            
-            if team_standings:
-                # جلب كل فرق الدوري من API وحفظها في الكاش الدائم
-                self._cache_all_league_standings(league_id, season)
-            
-            return team_standings or {'current_rank': 'N/A', 'points': 0, 'form': ''}
-            
+                # ⭐ إذا لم يوجد الفريق في الكاش، جلب من API
+                print(f"⚠️ الفريق {team_id} غير موجود في الكاش، جلب من API...")
+                team_standings = self._fetch_team_standings_from_api(team_id, league_id, season)
+                return team_standings or {'current_rank': 'N/A', 'points': 0, 'form': ''}
+            else:
+                # ⭐ إذا لم يكن هناك كاش على الإطلاق، جلب من API
+                print(f"🌐 لا يوجد كاش للدوري {league_id}، جلب من API...")
+                team_standings = self._fetch_team_standings_from_api(team_id, league_id, season)
+                return team_standings or {'current_rank': 'N/A', 'points': 0, 'form': ''}
+                
         except Exception as e:
             print(f"Error fetching team standings with cache: {e}")
             return {'current_rank': 'N/A', 'points': 0, 'form': ''}
@@ -3689,7 +3551,7 @@ class ProfessionalFootballApp(MDApp):
         """عرض حوار تأكيد مسح الكاش"""
         self.cache_dialog = MDDialog(
             title="🗑️ Clear Cache Confirmation",
-            text="This will delete ONLY:\n\n• scheduled_matches_cache\n• league_standings_cache\n\n⚠️ Last season cache will NOT be affected\n⚠️ User data (favorites, hidden, etc.) will NOT be deleted",
+            text="This will delete ONLY:\n\n• league_standings_cache\n\n⚠️ Last season cache will NOT be affected\n⚠️ User data (favorites, hidden, etc.) will NOT be deleted",
             buttons=[
                 MDFlatButton(
                     text="Cancel",
@@ -3713,7 +3575,7 @@ class ProfessionalFootballApp(MDApp):
                 self.cache_dialog.dismiss()
             
             # جداول الكاش المطلوب مسحها فقط
-            tables_to_clear = ['scheduled_matches_cache', 'league_standings_cache']
+            tables_to_clear = ['league_standings_cache']
             
             success, cleared_tables = self.storage.clear_specific_cache(tables=tables_to_clear)
             
