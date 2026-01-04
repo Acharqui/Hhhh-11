@@ -260,6 +260,17 @@ class SQLiteStorage:
                 )
             """)
 
+            # ⭐ جدول جديد: كاش المباريات المجدولة (دائم بدون صلاحية)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS scheduled_matches_cache (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    match_date TEXT,
+                    league_id INTEGER,
+                    match_data TEXT,
+                    UNIQUE(match_date, league_id)
+                )
+            """)
+
             # ⭐ جدول جديد: كاش الترتيب الحالي للدوريات (دائم بدون صلاحية)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS league_standings_cache (
@@ -382,6 +393,58 @@ class SQLiteStorage:
         except Exception as e:
             print(f"❌ خطأ في تحميل كاش الموسم الماضي: {e}")
             return None
+
+    def save_scheduled_matches_to_cache(self, match_date, league_id, match_data):
+        """حفظ المباريات المجدولة في الكاش بشكل دائم"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # تحويل البيانات إلى JSON
+            json_data = json.dumps(match_data)
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO scheduled_matches_cache 
+                (match_date, league_id, match_data)
+                VALUES (?, ?, ?)
+            ''', (match_date, league_id, json_data))
+            
+            conn.commit()
+            conn.close()
+            print(f"✅ تم حفظ {len(match_data)} مباراة في الكاش الدائم للتاريخ {match_date}")
+            return True
+        except Exception as e:
+            print(f"❌ خطأ في حفظ الكاش: {e}")
+            return False
+
+    def load_scheduled_matches_from_cache(self, match_date, league_id):
+        """تحميل المباريات المجدولة من الكاش الدائم"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT match_data FROM scheduled_matches_cache
+                WHERE match_date = ? AND league_id = ?
+            ''', (match_date, league_id))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row:
+                match_data = json.loads(row[0])
+                print(f"✅ تم تحميل {len(match_data)} مباراة من الكاش الدائم")
+                return match_data
+            
+            return None
+        except Exception as e:
+            print(f"❌ خطأ في تحميل الكاش: {e}")
+            return None
+
+    def clear_old_scheduled_cache(self, days_old=30):
+        """مسح الكاش القديم جداً (غير مستخدم - الكاش دائم)"""
+        print("⚠️ هذه الدالة غير مستخدمة - الكاش دائم بدون صلاحية")
+        return 0
 
     # دوال المباريات المفضلة
     def load_favorites(self):
@@ -571,6 +634,23 @@ class SQLiteStorage:
         except:
             pass
 
+    def check_cache_exists(self, match_date, league_id):
+        """التحقق من وجود بيانات في الكاش"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT 1 FROM scheduled_matches_cache 
+                WHERE match_date = ? AND league_id = ? LIMIT 1
+            ''', (match_date, league_id))
+            
+            exists = cursor.fetchone() is not None
+            conn.close()
+            return exists
+        except:
+            return False
+
     def clear_specific_cache(self, tables=None):
         """مسح جداول كاش محددة فقط"""
         try:
@@ -578,6 +658,12 @@ class SQLiteStorage:
             cursor = conn.cursor()
             
             cleared_tables = []
+            
+            # جدول المباريات المجدولة
+            if tables is None or 'scheduled_matches_cache' in tables:
+                cursor.execute('DELETE FROM scheduled_matches_cache')
+                cleared_tables.append('scheduled_matches_cache')
+                print(f"✅ تم مسح جدول scheduled_matches_cache")
             
             # جدول ترتيب الدوريات الحالي
             if tables is None or 'league_standings_cache' in tables:
@@ -1071,7 +1157,7 @@ KV = '''
                     MDLabel:
                         text: ":"
                         theme_text_color: 'Custom'
-                        text_color: get_color_from_hex("#00FF00") if root.second_team_color == 'green' else (get_color_from_hex("#2196F3") if root.second_team_color == 'blue' else (get_color_from_hex("#FF0000") if root.second_team_color == 'red' else get_color_from_hex("#FFFFFF")))
+                        text_color: get_color_from_hex("#00FF00") if root.first_team_color == 'green' else (get_color_from_hex("#2196F3") if root.first_team_color == 'blue' else (get_color_from_hex("#FF0000") if root.first_team_color == 'red' else get_color_from_hex("#FFFFFF")))
                         font_size: "9sp"
                         halign: 'center'
                         size_hint_x: 0.1
@@ -1493,7 +1579,7 @@ class ProfessionalFootballApp(MDApp):
     
     api_key = StringProperty('ff5507928d7ea3382d5a8149db14e988')
     base_url = StringProperty('https://v3.football.api-sports.io')
-    api_available = BooleanProperty(False)
+    api_available = BooleanProperty(True)
 
     current_match_goals_for = NumericProperty(0)
     current_match_goals_against = NumericProperty(0)
@@ -1501,7 +1587,14 @@ class ProfessionalFootballApp(MDApp):
     current_calendar_date = None
     calendar_mode = BooleanProperty(False)
     
-    filter_ns_perfect_1_1_enabled = BooleanProperty(False)  
+    filter_ns_perfect_1_1_enabled = BooleanProperty(False)
+    
+    # ⭐ الخصائص الجديدة للدفعات
+    leagues_per_batch = NumericProperty(10)  # عدد الدوريات في كل دفعة
+    current_leagues_batch = NumericProperty(0)  # الدفعة الحالية
+    all_leagues_count = NumericProperty(0)  # إجمالي عدد الدوريات
+    show_load_more = BooleanProperty(False)  # عرض زر تحميل المزيد
+    grouped_leagues_cache = DictProperty({})  # كاش المجموعات للدفعات
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1574,33 +1667,30 @@ class ProfessionalFootballApp(MDApp):
         super().on_stop()
 
     def fetch_matches_by_date_improved(self, target_date):
-        """دالة محسنة: تستخدم API مباشرة فقط"""
+        """دالة محسنة: تستخدم الكاش أولاً، ثم API فقط إذا لزم الأمر"""
         try:
             date_str = target_date.strftime('%Y-%m-%d')
-            print(f"🔍 جاري البحث عن المباريات للتاريخ: {date_str} من API مباشرة")
+            print(f"🔍 جاري البحث عن المباريات للتاريخ: {date_str}")
             
             # 1️⃣ التحقق من الدوريات المطلوبة
             required_league_ids = self.get_required_league_ids()
             
-            matches_from_api = []
+            all_cached_matches = []
+            leagues_needing_api = []
             
-            # 2️⃣ جلب البيانات مباشرة من API
+            # 2️⃣ محاولة جلب كل شيء من الكاش الدائم
             if required_league_ids:
-                print(f"🌐 جلب {len(required_league_ids)} دوري من API...")
                 for league_id in required_league_ids:
-                    url = f"{self.base_url}/fixtures"
-                    params = {'date': date_str, 'league': league_id}
-                    
-                    response = self.fetch_with_retry(url, params, max_retries=1)
-                    if response and response.status_code == 200:
-                        data = response.json()
-                        if data.get('response'):
-                            league_matches = self.process_api_response_improved(data['response'])
-                            matches_from_api.extend(league_matches)
-                            print(f"✅ تم جلب {len(league_matches)} مباراة من API للدوري {league_id}")
+                    cached = self.storage.load_scheduled_matches_from_cache(date_str, league_id)
+                    if cached:
+                        all_cached_matches.extend(cached)
+                        print(f"✅ تم تحميل {len(cached)} مباراة من الكاش للدوري {league_id}")
+                    else:
+                        leagues_needing_api.append(league_id)
+                        print(f"⚠️ لا يوجد كاش للدوري {league_id}")
             else:
-                # جلب كل المباريات من API
-                print("🌐 جلب جميع المباريات من API...")
+                # ✅ التعديل: استخدام الطريقة القديمة لتحميل جميع المباريات مرة واحدة
+                print("🌐 تحميل جميع المباريات مرة واحدة (للتقويم)...")
                 url = f"{self.base_url}/fixtures"
                 params = {'date': date_str}
                 
@@ -1610,12 +1700,56 @@ class ProfessionalFootballApp(MDApp):
                     if data.get('response'):
                         api_matches = self.process_api_response_improved(data['response'])
                         matches_from_api = api_matches
-                        print(f"✅ تم جلب {len(api_matches)} مباراة من API")
+                        
+                        # ✅ حفظ في الكاش لكل دوري
+                        matches_by_league = {}
+                        for match in api_matches:
+                            league_id = match.get('league_id')
+                            if league_id:
+                                if league_id not in matches_by_league:
+                                    matches_by_league[league_id] = []
+                                matches_by_league[league_id].append(match)
+                        
+                        for league_id, league_matches in matches_by_league.items():
+                            self.storage.save_scheduled_matches_to_cache(
+                                date_str, league_id, league_matches
+                            )
+                        
+                        # ⭐ عند التنزيل الأول: إرجاع الكل دون تقسيم
+                        return api_matches
             
-            # 5️⃣ إزالة التكرارات
+            # 3️⃣ إذا كان كل شيء في الكاش، نرجع البيانات مباشرة
+            if not leagues_needing_api and all_cached_matches:
+                print(f"🎯 النتيجة النهائية من الكاش فقط: {len(all_cached_matches)} مباراة")
+                return all_cached_matches
+            
+            # 4️⃣ إذا احتجنا إلى API
+            matches_from_api = []
+            if leagues_needing_api:
+                print(f"🌐 جلب {len(leagues_needing_api)} دوري من API...")
+                for league_id in leagues_needing_api:
+                    url = f"{self.base_url}/fixtures"
+                    params = {'date': date_str, 'league': league_id}
+                    
+                    response = self.fetch_with_retry(url, params, max_retries=1)
+                    if response and response.status_code == 200:
+                        data = response.json()
+                        if data.get('response'):
+                            league_matches = self.process_api_response_improved(data['response'])
+                            matches_from_api.extend(league_matches)
+                            
+                            # حفظ في الكاش
+                            self.storage.save_scheduled_matches_to_cache(
+                                date_str, league_id, league_matches
+                            )
+            
+            # 5️⃣ دمج النتائج
+            all_matches = all_cached_matches + matches_from_api
+            
+            # إزالة التكرارات
             unique_matches = []
             seen_ids = set()
-            for match in matches_from_api:
+            for match in all_matches:
                 match_id = match.get('id')
                 if match_id and match_id not in seen_ids:
                     seen_ids.add(match_id)
@@ -1624,12 +1758,16 @@ class ProfessionalFootballApp(MDApp):
             # 6️⃣ إزالة المباريات المخفية
             unique_matches = self.filter_out_hidden_matches_immediately(unique_matches)
             
-            print(f"📊 النتيجة النهائية من API: {len(unique_matches)} مباراة")
+            print(f"📊 النتيجة النهائية: {len(unique_matches)} مباراة ({len(all_cached_matches)} من الكاش، {len(matches_from_api)} من API)")
             
             return unique_matches
             
         except Exception as e:
             print(f"❌ خطأ في جلب المباريات: {e}")
+            # في حالة الخطأ، نعود للكاش الموجود
+            if 'all_cached_matches' in locals() and all_cached_matches:
+                print(f"🔄 الرجوع للكاش بسبب خطأ: {len(all_cached_matches)} مباراة")
+                return all_cached_matches
             return []
 
     def filter_out_hidden_matches_immediately(self, matches_list):
@@ -1991,16 +2129,19 @@ class ProfessionalFootballApp(MDApp):
                     if team_data.get('team_id') == team_id:
                         return team_data
                 
-                # ⭐ إذا لم يوجد الفريق في الكاش، جلب من API
-                print(f"⚠️ الفريق {team_id} غير موجود في الكاش، جلب من API...")
-                team_standings = self._fetch_team_standings_from_api(team_id, league_id, season)
-                return team_standings or {'current_rank': 'N/A', 'points': 0, 'form': ''}
-            else:
-                # ⭐ إذا لم يكن هناك كاش على الإطلاق، جلب من API
-                print(f"🌐 لا يوجد كاش للدوري {league_id}، جلب من API...")
-                team_standings = self._fetch_team_standings_from_api(team_id, league_id, season)
-                return team_standings or {'current_rank': 'N/A', 'points': 0, 'form': ''}
-                
+                # إذا لم نجده في الكاش، نحتاج لطلب جديد
+                print(f"⚠️ الفريق {team_id} غير موجود في كاش الدوري {league_id}")
+            
+            # إذا لم يكن في الكاش، جلب جديد من API
+            print(f"🌐 جلب ترتيب جديد من API للدوري {league_id}")
+            team_standings = self._fetch_team_standings_from_api(team_id, league_id, season)
+            
+            if team_standings:
+                # جلب كل فرق الدوري من API وحفظها في الكاش الدائم
+                self._cache_all_league_standings(league_id, season)
+            
+            return team_standings or {'current_rank': 'N/A', 'points': 0, 'form': ''}
+            
         except Exception as e:
             print(f"Error fetching team standings with cache: {e}")
             return {'current_rank': 'N/A', 'points': 0, 'form': ''}
@@ -2236,6 +2377,69 @@ class ProfessionalFootballApp(MDApp):
                 continue
         return processed
 
+    # ⭐ دوال تجميع وعرض الدفعات
+    def group_matches_by_league(self, matches):
+        """تجميع المباريات حسب الدوري"""
+        leagues_dict = {}
+        
+        for match in matches:
+            league_id = match.get('league_id')
+            league_name = match.get('league', 'Unknown League')
+            
+            if league_id not in leagues_dict:
+                leagues_dict[league_id] = {
+                    'name': league_name,
+                    'id': league_id,
+                    'matches': []
+                }
+            
+            leagues_dict[league_id]['matches'].append(match)
+        
+        # تحويل إلى قائمة مرتبة حسب اسم الدوري
+        sorted_leagues = sorted(leagues_dict.values(), key=lambda x: x['name'])
+        return sorted_leagues
+
+    def display_leagues_batch(self, leagues_list, container, is_append=True):
+        """عرض دفعة من الدوريات"""
+        start_index = self.current_leagues_batch * self.leagues_per_batch
+        end_index = start_index + self.leagues_per_batch
+        
+        # تحديد الدفعة الحالية
+        current_batch = leagues_list[start_index:end_index]
+        
+        # إذا لم يكن إلحاقاً، احذف المباريات الحالية أولاً (لكن احتفظ بالعناوين)
+        if not is_append:
+            # حفظ العناوين
+            headers = []
+            for widget in container.children[:]:
+                if isinstance(widget, OneLineListItem) and ("📅" in widget.text or "🏆" in widget.text):
+                    headers.append(widget)
+            
+            # مسح الحاوية
+            container.clear_widgets()
+            
+            # إعادة إضافة العناوين
+            for header in headers:
+                container.add_widget(header)
+        
+        for league_data in current_batch:
+            # عرض عنوان الدوري
+            league_header = OneLineListItem(
+                text=f"🏆 {league_data['name']} ({len(league_data['matches'])} matches)"
+            )
+            league_header.md_bg_color = get_color_from_hex("#E8F5E8")
+            league_header.size_hint_y = None
+            league_header.height = dp(40)
+            container.add_widget(league_header)
+            
+            # عرض مباريات الدوري
+            for match in league_data['matches']:
+                item = OptimizedCompactMatchItem(match_data=match)
+                container.add_widget(item)
+        
+        # تحديث عداد الدفعات
+        self.current_leagues_batch += 1
+
     @mainthread
     def display_calendar_matches_improved(self, matches, target_date):
         container = self.root.ids.main_list
@@ -2317,9 +2521,22 @@ class ProfessionalFootballApp(MDApp):
                 )
                 container.add_widget(count_label)
                 
-                for match in final_matches:
-                    item = OptimizedCompactMatchItem(match_data=match)
-                    container.add_widget(item)
+                # ✅ التعديل هنا: تجميع المباريات حسب الدوري أولاً
+                matches_by_league = self.group_matches_by_league(final_matches)
+                
+                # ✅ حفظ في الكاش للاستخدام في الدفعات
+                self.grouped_leagues_cache = {str(i): league for i, league in enumerate(matches_by_league)}
+                
+                # ✅ حساب الدفعات
+                self.all_leagues_count = len(matches_by_league)
+                self.current_leagues_batch = 0
+                
+                # ✅ عرض الدفعة الأولى فقط
+                self.display_leagues_batch(matches_by_league, container, is_append=True)
+                
+                # ✅ عرض زر "تحميل المزيد" إذا كانت هناك المزيد من الدوريات
+                self.show_load_more_button(container, matches_by_league)
+                
             else:
                 no_matches_text = "No scheduled matches found"
                 if required_league_ids:
@@ -2332,6 +2549,66 @@ class ProfessionalFootballApp(MDApp):
                 self.show_empty_message(no_matches_text)
         else:
             self.show_empty_message(f"No scheduled matches found for {target_date.strftime('%d/%m/%Y')}")
+
+    def show_load_more_button(self, container, leagues_list):
+        """عرض زر تحميل المزيد إذا كانت هناك دوريات إضافية"""
+        total_leagues = len(leagues_list)
+        displayed_leagues = self.current_leagues_batch * self.leagues_per_batch
+        
+        if displayed_leagues < total_leagues:
+            # حساب عدد الدوريات المتبقية
+            remaining_leagues = total_leagues - displayed_leagues
+            leagues_in_next_batch = min(remaining_leagues, self.leagues_per_batch)
+            
+            # إنشاء زر تحميل المزيد
+            load_more_button = MDRaisedButton(
+                text=f"⬇️ Load more leagues ({leagues_in_next_batch} leagues remaining)",
+                size_hint=(None, None),
+                size=(dp(300), dp(40)),
+                pos_hint={'center_x': 0.5},
+                md_bg_color=get_color_from_hex("#2196F3"),
+                on_release=lambda x: self.load_more_leagues(leagues_list, container)
+            )
+            
+            container.add_widget(load_more_button)
+            self.show_load_more = True
+        else:
+            self.show_load_more = False
+
+    def load_more_leagues(self, leagues_list, container):
+        """تحميل دفعة إضافية من الدوريات"""
+        # إزالة زر "تحميل المزيد" القديم
+        for widget in container.children[:]:
+            if isinstance(widget, MDRaisedButton) and "Load more leagues" in widget.text:
+                container.remove_widget(widget)
+                break
+        
+        # عرض الدفعة التالية فقط (بدون إلحاق، بل باستبدال)
+        self.display_leagues_batch(leagues_list, container, is_append=False)
+        
+        # عرض زر "تحميل المزيد" الجديد إذا لزم الأمر
+        self.show_load_more_button(container, leagues_list)
+        
+        # التمرير لأعلى لعرض بداية المحتوى الجديد
+        Clock.schedule_once(lambda dt: self.scroll_to_top(), 0.1)
+
+    def scroll_to_top(self):
+        """التمرير إلى أعلى القائمة"""
+        try:
+            scroll_view = self.root.ids.main_scroll
+            # الانتقال إلى أعلى القائمة
+            scroll_view.scroll_y = 1
+        except Exception as e:
+            print(f"❌ خطأ في التمرير: {e}")
+
+    def scroll_to_bottom(self):
+        """التمرير إلى أسفل القائمة"""
+        try:
+            scroll_view = self.root.ids.main_scroll
+            # الانتقال إلى أسفل القائمة
+            scroll_view.scroll_y = 0
+        except Exception as e:
+            print(f"❌ خطأ في التمرير: {e}")
 
     def show_stats_popup_improved(self, match_data):
         try:
@@ -3171,6 +3448,7 @@ class ProfessionalFootballApp(MDApp):
             )
             container.add_widget(count_label)
             
+            # ⭐ صفحة Live تعرض الكل بدون نظام 10..10
             filter_texts = []
             if len(self.selected_leagues) > 0:
                 filter_texts.append(f"Selected: {len(self.selected_leagues)}")
@@ -3193,6 +3471,7 @@ class ProfessionalFootballApp(MDApp):
                 live_header.md_bg_color = get_color_from_hex("#FFEBEE")
                 container.add_widget(live_header)
                 
+                # ⭐ عرض جميع المباريات مرة واحدة بدون تقسيم
                 for match in organized_live_matches:
                     item = OptimizedCompactMatchItem(
                         match_data=match, 
@@ -3551,7 +3830,7 @@ class ProfessionalFootballApp(MDApp):
         """عرض حوار تأكيد مسح الكاش"""
         self.cache_dialog = MDDialog(
             title="🗑️ Clear Cache Confirmation",
-            text="This will delete ONLY:\n\n• league_standings_cache\n\n⚠️ Last season cache will NOT be affected\n⚠️ User data (favorites, hidden, etc.) will NOT be deleted",
+            text="This will delete ONLY:\n\n• scheduled_matches_cache\n• league_standings_cache\n\n⚠️ Last season cache will NOT be affected\n⚠️ User data (favorites, hidden, etc.) will NOT be deleted",
             buttons=[
                 MDFlatButton(
                     text="Cancel",
@@ -3575,7 +3854,7 @@ class ProfessionalFootballApp(MDApp):
                 self.cache_dialog.dismiss()
             
             # جداول الكاش المطلوب مسحها فقط
-            tables_to_clear = ['league_standings_cache']
+            tables_to_clear = ['scheduled_matches_cache', 'league_standings_cache']
             
             success, cleared_tables = self.storage.clear_specific_cache(tables=tables_to_clear)
             
