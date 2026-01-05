@@ -4159,39 +4159,42 @@ class ProfessionalFootballApp(MDApp):
             away_score = match_data.get('away_score', 0)
             status = match_data.get('status', 'NS')
             
-            # ------------------------------------------------------------------
-
+            # التحقق من وجود المباراة في الكاش
+            match_date = datetime.now().date().strftime('%Y-%m-%d')
+            scheduled_cache = self.storage.load_scheduled_matches_from_cache(match_date, league_id)
+            
+            if scheduled_cache:
+                match_found = any(
+                    m.get('home_team_id') == home_team_id and 
+                    m.get('away_team_id') == away_team_id 
+                    for m in scheduled_cache
+                )
+                if not match_found:
+                    return "❌ no (المباراة غير مجدولة)"
+            else:
+                return "❌ no (لا يوجد كاش)"
+            
+            # باقي الشروط الأصلية
             if status in ['FT', 'AET', 'PEN']:
-
                 if home_score == 0 and away_score == 0:
-                    return "❌ no (انتهت بالتعادل السلبي 0-0)"
-                
-
-                return "❌ no (انتهت: FT/AET/PEN)"
-
-            # ------------------------------------------------------------------
-
+                    return "❌ no"
+                return "❌ no"
+            
             if home_score > 0 and away_score > 0:
-                return "❌ no (سجلوا كلاهما)"
-
-            # ------------------------------------------------------------------
-
+                return "❌ no"
+            
             if status not in ['NS', '1H', '2H', 'HT', 'ET', 'LIVE']:
                 return "❌ no"
-
-
-            if home_score == away_score and status != 'NS': 
-                return "✅ yes" 
             
-
             if status == 'NS':
                 return "✅ yes"
-                
-
+            
+            if home_score == away_score and status != 'NS': 
+                return "✅ yes"
+            
             if not home_team_id or not away_team_id or not league_id:
                 return "❌ no"
-
-
+            
             if home_score < away_score:
                 losing_team_id = home_team_id
                 winning_team_id = away_team_id
@@ -4201,7 +4204,6 @@ class ProfessionalFootballApp(MDApp):
                 winning_team_id = home_team_id
                 losing_is_home = False
             
-
             losing_stats_str = self.fetch_team_last_matches_improved(
                 losing_team_id, league_id, season, losing_is_home
             )
@@ -4210,33 +4212,27 @@ class ProfessionalFootballApp(MDApp):
                 winning_team_id, league_id, season, not losing_is_home
             )
             
-
             losing_goals_for, losing_goals_against = self.extract_goals_for_and_against(losing_stats_str)
             winning_goals_for, winning_goals_against = self.extract_goals_for_and_against(winning_stats_str)
-
+            
             if losing_goals_for is None:
-                return "❌ no (لا توجد بيانات 3 مباريات كاملة للفريق الخاسر)"
+                return "❌ no"
             
             if winning_goals_for is None:
-                return "❌ no (لا توجد بيانات 3 مباريات كاملة للفريق الفائز)"
+                return "❌ no"
             
-            # ------------------------------------------------------------------
             if losing_goals_against > 7:
-                return "❌ no (الخاسر استقبل أكثر من 7 أهداف)"
+                return "❌ no"
             
-
             if (losing_goals_against - winning_goals_against) > 4:
-                    return "❌ no (الخاسر استقبل عدد أهداف مرتفع)"
-
-                                                # ============================================================
-
+                return "❌ no"
+            
             if losing_goals_for >= winning_goals_for:
                 return "✅ yes"
             
-            return "❌ no (الأهداف المسجلة للخاسر أقل)"
+            return "❌ no"
             
         except Exception as e:
-            print(f"Error in filter_condition_2: {e}")
             return "❌ no"
 
     def combined_filter_condition(self, match_data):
