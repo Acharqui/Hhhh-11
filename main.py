@@ -1,6 +1,6 @@
 from kivy.core.window import Window
 from kivy.lang import Builder
-from kivy.properties import StringProperty, ListProperty, BooleanProperty, DictProperty, NumericProperty
+from kivy.properties import StringProperty, ListProperty, BooleanProperty, DictProperty, NumericProperty, ObjectProperty
 from kivy.clock import Clock, mainthread
 from kivy.utils import platform, get_color_from_hex
 from kivy.metrics import dp
@@ -282,15 +282,14 @@ class SQLiteStorage:
                 )
             """)
 
-            # ⭐ جدول جديد: كاش ترتيب الموسم الماضي (دائم بدون صلاحية)
+            # ⭐ جدول جديد: كاش ترتيب الموسم الماضي (دائم بدون صلاحية) - بحسب الدوري بالكامل
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS last_season_standings_cache (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    team_id INTEGER,
                     league_id INTEGER,
                     season INTEGER,
                     standings_data TEXT,
-                    UNIQUE(team_id, league_id, season)
+                    UNIQUE(league_id, season)
                 )
             """)
 
@@ -300,6 +299,36 @@ class SQLiteStorage:
 
         except Exception as e:
             print(f"❌ DB init error: {e}")
+
+    def get_last_season_cache_by_team(self, team_id, season):
+        """جلب بيانات الفريق من كاش الموسم الماضي حسب team_id"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # البحث في جميع سجلات الموسم الماضي
+            cursor.execute('''
+                SELECT standings_data FROM last_season_standings_cache
+                WHERE season = ?
+            ''', (season,))
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            for row in rows:
+                if row[0]:
+                    try:
+                        league_data = json.loads(row[0])
+                        for team_data in league_data:
+                            if team_data.get('team_id') == team_id:
+                                return team_data
+                    except:
+                        continue
+            
+            return None
+        except Exception as e:
+            print(f"Error getting last season cache by team: {e}")
+            return None
 
     def save_league_standings_to_cache(self, league_id, season, standings_data):
         """حفظ ترتيب الدوري في الكاش الدائم"""
@@ -348,8 +377,8 @@ class SQLiteStorage:
             print(f"❌ خطأ في تحميل كاش الترتيب: {e}")
             return None
 
-    def save_last_season_standings_to_cache(self, team_id, league_id, season, standings_data):
-        """حفظ ترتيب الموسم الماضي في الكاش الدائم"""
+    def save_last_season_standings_to_cache(self, league_id, season, standings_data):
+        """حفظ ترتيب الموسم الماضي للدوري بالكامل في الكاش الدائم"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -358,35 +387,35 @@ class SQLiteStorage:
             
             cursor.execute('''
                 INSERT OR REPLACE INTO last_season_standings_cache 
-                (team_id, league_id, season, standings_data)
-                VALUES (?, ?, ?, ?)
-            ''', (team_id, league_id, season, json_data))
+                (league_id, season, standings_data)
+                VALUES (?, ?, ?)
+            ''', (league_id, season, json_data))
             
             conn.commit()
             conn.close()
-            print(f"✅ تم حفظ ترتيب الموسم الماضي للفريق {team_id} في الكاش الدائم")
+            print(f"✅ تم حفظ ترتيب الموسم الماضي للدوري {league_id} في الكاش الدائم")
             return True
         except Exception as e:
             print(f"❌ خطأ في حفظ كاش الموسم الماضي: {e}")
             return False
 
-    def load_last_season_standings_from_cache(self, team_id, league_id, season):
-        """تحميل ترتيب الموسم الماضي من الكاش الدائم"""
+    def load_last_season_standings_from_cache(self, league_id, season):
+        """تحميل ترتيب الموسم الماضي للدوري من الكاش الدائم"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
             cursor.execute('''
                 SELECT standings_data FROM last_season_standings_cache
-                WHERE team_id = ? AND league_id = ? AND season = ?
-            ''', (team_id, league_id, season))
+                WHERE league_id = ? AND season = ?
+            ''', (league_id, season))
             
             row = cursor.fetchone()
             conn.close()
             
             if row:
                 standings_data = json.loads(row[0])
-                print(f"✅ تم تحميل ترتيب الموسم الماضي للفريق {team_id} من الكاش الدائم")
+                print(f"✅ تم تحميل ترتيب الموسم الماضي للدوري {league_id} من الكاش الدائم")
                 return standings_data
             
             return None
@@ -671,6 +700,8 @@ class SQLiteStorage:
                 cleared_tables.append('league_standings_cache')
                 print(f"✅ تم مسح جدول league_standings_cache")
             
+            # ⭐ ملاحظة: last_season_standings_cache لم يتم تضمينه ليظل محفوظاً
+            
             conn.commit()
             conn.close()
             
@@ -839,6 +870,7 @@ class OptimizedCompactMatchItem(MDCard):
     match_data = DictProperty({})
     is_fav = BooleanProperty(False)
     is_live = BooleanProperty(False)
+    is_focused = BooleanProperty(False)  # خاصية التركيز الجديدة
     
     league_name = StringProperty("")
     home_team = StringProperty("")
@@ -853,10 +885,49 @@ class OptimizedCompactMatchItem(MDCard):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.bind(match_data=self.on_match_data)
+        self.bind(is_focused=self.on_focus_changed)  # مراقبة تغيير حالة التركيز
 
     def on_match_data(self, instance, value):
         if value:
             self.update_display()
+
+    def on_focus_changed(self, instance, value):
+        """تحديث الخلفية عند تغيير حالة التركيز"""
+        if value:
+            # عندما يكون المباراة مركزة - خلفية سوداء
+            self.md_bg_color = get_color_from_hex("#000000")
+            # تغيير ألوان النص للأبيض ليكون مرئياً
+            self._update_text_colors(focused=True)
+        else:
+            # إرجاع الخلفية الأصلية
+            if self.is_live:
+                self.md_bg_color = get_color_from_hex("000000")
+            else:
+                self.md_bg_color = get_color_from_hex("#FFFFFF")
+            # إرجاع ألوان النص الأصلية
+            self._update_text_colors(focused=False)
+
+    def _update_text_colors(self, focused=False):
+        """تحديث ألوان النصوص بناءً على حالة التركيز"""
+        # هذه الدالة تحتاج إلى الوصول إلى الـ widgets الداخلية
+        # سنقوم بذلك عبر تحديث العرض
+        Clock.schedule_once(lambda dt: self._apply_text_colors(focused), 0.1)
+
+    def _apply_text_colors(self, focused):
+        """تطبيق ألوان النصوص الفعلية"""
+        try:
+            color_white = get_color_from_hex("#FFFFFF")
+            color_black = get_color_from_hex("#000000")
+            color_red = get_color_from_hex("#FF0000")
+            color_gray = get_color_from_hex("#666666")
+            
+            if focused:
+                # في حالة التركيز، جعل النص أبيض
+                # هنا تحتاج إلى الوصول إلى الـ labels الداخلية
+                # سنقوم بهذا في update_display
+                pass
+        except:
+            pass
 
     def update_display(self):
         try:
@@ -891,7 +962,10 @@ class OptimizedCompactMatchItem(MDCard):
             self.match_time = self.get_time_text(status)
             self.is_live = status in ['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE']
             
-            if self.is_live:
+            # تحديث الخلفية بناءً على التركيز أولاً، ثم حالة المباراة الحية
+            if self.is_focused:
+                self.md_bg_color = get_color_from_hex("#000000")
+            elif self.is_live:
                 self.md_bg_color = get_color_from_hex("000000") 
                 self.elevation = 2 
             else:
@@ -952,6 +1026,12 @@ class OptimizedCompactMatchItem(MDCard):
             
             if not hide_button.collide_point(*touch.pos) and touch.x < safe_area_limit:
                 app = MDApp.get_running_app()
+                # إلغاء تركيز المباراة السابقة
+                app.clear_match_focus()
+                # تعيين التركيز على هذه المباراة
+                self.is_focused = True
+                app.current_focused_match = self
+                
                 app.show_stats_popup_improved(self.match_data)
                 return True
                 
@@ -1203,7 +1283,7 @@ KV = '''
                     MDLabel:
                         text: "(" + root.first_team_last_rank + ")"
                         theme_text_color: 'Custom'
-                        text_color: root.first_last_rank_color
+                        text_color: get_color_from_hex("#2196F3") if root.first_last_rank_color == "different_league_blue" else (get_color_from_hex("#AAAAAA") if root.first_last_rank_color == "normal" else (get_color_from_hex("#00FF00") if root.first_last_rank_color == "new_team" else get_color_from_hex("#FF9800")))
                         font_size: "15sp"
                         halign: 'center'
             
@@ -1246,7 +1326,7 @@ KV = '''
                         MDLabel:
                             text: "(" + root.second_team_last_rank + ")"
                             theme_text_color: 'Custom'
-                            text_color: root.second_last_rank_color
+                            text_color: get_color_from_hex("#2196F3") if root.second_last_rank_color == "different_league_blue" else (get_color_from_hex("#AAAAAA") if root.second_last_rank_color == "normal" else (get_color_from_hex("#00FF00") if root.second_last_rank_color == "new_team" else get_color_from_hex("#FF9800")))
                             font_size: "15sp"
                             halign: 'center'
 
@@ -1324,8 +1404,8 @@ KV = '''
     size_hint_y: None
     height: dp(80)
     x: 0
-    md_bg_color: get_color_from_hex("000000") if root.is_live else get_color_from_hex("#FFFFFF")
-    elevation: 2 if root.is_live else 1
+    md_bg_color: get_color_from_hex("#000000") if root.is_focused else (get_color_from_hex("000000") if root.is_live else get_color_from_hex("#FFFFFF"))
+    elevation: 3 if root.is_focused else (2 if root.is_live else 1)
     padding: dp(8)
     radius: dp(8)
     orientation: 'horizontal'
@@ -1337,19 +1417,21 @@ KV = '''
         spacing: dp(2)
         
         MDLabel:
+            id: time_label
             text: root.match_time
             font_style: 'Caption'
             theme_text_color: 'Custom'
-            text_color: get_color_from_hex("#FF0000") if root.is_live else get_color_from_hex("#666666")
+            text_color: get_color_from_hex("#FFFFFF") if root.is_focused else (get_color_from_hex("#FF0000") if root.is_live else get_color_from_hex("#666666"))
             halign: 'center'
             bold: True
             font_size: '16sp'
             
         MDLabel:
+            id: league_label
             text: root.league_name
             font_style: 'Caption'
             theme_text_color: 'Custom'
-            text_color: get_color_from_hex("#FFFFFF") if root.is_live else get_color_from_hex("#999999")
+            text_color: get_color_from_hex("#CCCCCC") if root.is_focused else (get_color_from_hex("#FFFFFF") if root.is_live else get_color_from_hex("#999999"))
             halign: 'center'
             font_size: '9sp'
             shorten: True
@@ -1367,22 +1449,24 @@ KV = '''
             spacing: dp(3)
             
             MDLabel:
+                id: home_team_label
                 text: root.home_team
                 font_style: 'Body2'
                 halign: 'right'
                 theme_text_color: 'Custom'
-                text_color: get_color_from_hex("#FFFFFF") if root.is_live else get_color_from_hex("#000000")
+                text_color: get_color_from_hex("#FFFFFF") if root.is_focused or root.is_live else get_color_from_hex("#000000")
                 shorten: True
                 shorten_from: 'right'
                 font_size: '12sp'
                 text_size: self.width, None
                 
             MDLabel:
+                id: home_score_label
                 text: root.home_score
                 font_style: 'Subtitle1'
                 halign: 'center'
                 theme_text_color: 'Custom'
-                text_color: get_color_from_hex("FFFFFF") if root.is_live else get_color_from_hex("#000000")
+                text_color: get_color_from_hex("#FFFFFF") if root.is_focused or root.is_live else get_color_from_hex("#000000")
                 bold: True
                 font_size: '18sp'
                 size_hint_x: 0.28
@@ -1393,12 +1477,13 @@ KV = '''
             spacing: dp(2)
             
             MDLabel:
+                id: status_label
                 text: root.match_status
                 font_style: 'Caption'
                 halign: 'center'
                 theme_text_color: 'Custom'
-                text_color: get_color_from_hex("#FF0000") if root.is_live else get_color_from_hex("#666666")
-                bold: root.is_live
+                text_color: get_color_from_hex("#FF0000") if root.is_focused or root.is_live else get_color_from_hex("#666666")
+                bold: root.is_focused or root.is_live
                 font_size: '10sp'
 
         BoxLayout:
@@ -1407,21 +1492,23 @@ KV = '''
             spacing: dp(3)
             
             MDLabel:
+                id: away_score_label
                 text: root.away_score
                 font_style: 'Subtitle1'
                 halign: 'center'
                 theme_text_color: 'Custom'
-                text_color: get_color_from_hex("FFFFFF") if root.is_live else get_color_from_hex("#000000")
+                text_color: get_color_from_hex("#FFFFFF") if root.is_focused or root.is_live else get_color_from_hex("#000000")
                 bold: True
                 font_size: '18sp'
                 size_hint_x: 0.28
                 
             MDLabel:
+                id: away_team_label
                 text: root.away_team
                 font_style: 'Body2'
                 halign: 'left'
                 theme_text_color: 'Custom'
-                text_color: get_color_from_hex("#FFFFFF") if root.is_live else get_color_from_hex("#000000")
+                text_color: get_color_from_hex("#FFFFFF") if root.is_focused or root.is_live else get_color_from_hex("#000000")
                 shorten: True
                 shorten_from: 'left'
                 font_size: '12sp'
@@ -1437,7 +1524,7 @@ KV = '''
             icon: 'eye-off'
             user_font_size: '20sp'
             theme_text_color: 'Custom'
-            text_color: get_color_from_hex("#FF5252")
+            text_color: get_color_from_hex("#FF5252") if not root.is_focused else get_color_from_hex("#FF9999")
             on_release: root.hide_match()
             size_hint_y: 1
 
@@ -1572,7 +1659,7 @@ class ProfessionalFootballApp(MDApp):
     auto_update = BooleanProperty(False)
     update_interval = NumericProperty(600)
     last_update = StringProperty('')
-    request_count = NumericProperty(0)
+    request_count = NumericProperty(7500)
     max_requests = NumericProperty(7500)
     
     current_segment = StringProperty('today')
@@ -1595,6 +1682,9 @@ class ProfessionalFootballApp(MDApp):
     all_leagues_count = NumericProperty(0)  # إجمالي عدد الدوريات
     show_load_more = BooleanProperty(False)  # عرض زر تحميل المزيد
     grouped_leagues_cache = DictProperty({})  # كاش المجموعات للدفعات
+    
+    # ⭐ خاصية التركيز على المباريات
+    current_focused_match = ObjectProperty(None, allownone=True)
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1666,6 +1756,12 @@ class ProfessionalFootballApp(MDApp):
         
         super().on_stop()
 
+    def clear_match_focus(self):
+        """إلغاء التركيز من المباراة الحالية"""
+        if self.current_focused_match:
+            self.current_focused_match.is_focused = False
+            self.current_focused_match = None
+
     def fetch_matches_by_date_improved(self, target_date):
         """جلب المباريات: الكاش حسب الدوريات المختارة، API يجلب الكل"""
         try:
@@ -1686,7 +1782,25 @@ class ProfessionalFootballApp(MDApp):
             else:
                 print("⚠️ لا دوريات مختارة للكاش، سيتم تخطي الكاش")
 
-            # 3️⃣ جلب كل المباريات من API بدون تحديد الدوري
+            # ⭐⭐ إضافة شرط هنا: إذا كان الفلتر active، لا تجلب من API
+            if self.filter_ns_perfect_1_1_enabled:
+                print("🚫 الفلتر active - الاكتفاء بالكاش فقط")
+                # إزالة التكرارات من الكاش
+                unique_matches = []
+                seen_ids = set()
+                for match in all_cached_matches:
+                    match_id = match.get('id')
+                    if match_id and match_id not in seen_ids:
+                        seen_ids.add(match_id)
+                        unique_matches.append(match)
+                
+                # إزالة المباريات المخفية
+                unique_matches = self.filter_out_hidden_matches_immediately(unique_matches)
+                
+                print(f"📊 النتيجة من الكاش فقط: {len(unique_matches)} مباراة")
+                return unique_matches
+
+            # 3️⃣ جلب كل المباريات من API بدون تحديد الدوري (فقط إذا لم يكن الفلتر active)
             print("🌐 تحميل جميع المباريات مرة واحدة من API...")
             url = f"{self.base_url}/fixtures"
             params = {'date': date_str}
@@ -1822,8 +1936,8 @@ class ProfessionalFootballApp(MDApp):
             home_rank_current_data = self.fetch_team_standings_with_cache(home_team_id, league_id, season)
             away_rank_current_data = self.fetch_team_standings_with_cache(away_team_id, league_id, season)
             
-            home_rank_current = home_rank_current_data.get('current_rank', 'N/A')
-            away_rank_current = away_rank_current_data.get('current_rank', 'N/A')
+            home_rank_current = str(home_rank_current_data.get('current_rank', 'N/A'))  # ✅ تحويل إلى نص
+            away_rank_current = str(away_rank_current_data.get('current_rank', 'N/A'))  # ✅ تحويل إلى نص
             
             status = match_data.get('status', 'NS')
             if status not in ['NS', 'TBD']:
@@ -2049,40 +2163,7 @@ class ProfessionalFootballApp(MDApp):
             print(f"Error in fetch_team_last_goals_for_and_against_from_api for team {team_id}: {e}")
             return 0, 0, 0
 
-    def fetch_team_standings_for_filter_from_api(self, team_id, league_id, season):
-        """جلب ترتيب الفريق من API"""
-        try:
-            url = f"{self.base_url}/standings"
-            params = {
-                'league': league_id,
-                'season': season
-            }
-            
-            response = requests.get(url, headers=self.headers, params=params, timeout=15)
-            
-            if response.status_code == 200:
-                data = response.json()
-                standings = data.get('response', [])
-                
-                if standings:
-                    league_standings = standings[0].get('league', {}).get('standings', [])
-
-                    for standing_group in league_standings:
-                        for team_standing in standing_group:
-                            if team_standing.get('team', {}).get('id') == team_id:
-                                return {
-                                    'current_rank': team_standing.get('rank'),
-                                    'points': team_standing.get('points'),
-                                    'form': team_standing.get('form')
-                                }
-
-            return {'current_rank': 'N/A', 'points': 0, 'form': ''}
-            
-        except Exception as e:
-            print(f"Error in fetch_team_standings_for_filter_from_api: {e}")
-            return {'current_rank': 'N/A', 'points': 0, 'form': ''}
-
-    # ⭐ دالة محسنة لجلب الترتيب مع الكاش الدائم
+    # ⭐ دالة محسنة لجلب الترتيب مع الكاش الدائم - التعديل المهم هنا
     def fetch_team_standings_with_cache(self, team_id, league_id, season):
         """جلب ترتيب الفريق مع استخدام الكاش الدائم"""
         try:
@@ -2095,16 +2176,13 @@ class ProfessionalFootballApp(MDApp):
                 for team_data in all_standings:
                     if team_data.get('team_id') == team_id:
                         return team_data
-                
-                # إذا لم نجده في الكاش، نحتاج لطلب جديد
-                print(f"⚠️ الفريق {team_id} غير موجود في كاش الدوري {league_id}")
             
             # إذا لم يكن في الكاش، جلب جديد من API
             print(f"🌐 جلب ترتيب جديد من API للدوري {league_id}")
             team_standings = self._fetch_team_standings_from_api(team_id, league_id, season)
             
+            # ⭐ الحل البسيط: إذا وجدنا بيانات الفريق، احفظ الدوري بالكامل في الكاش
             if team_standings:
-                # جلب كل فرق الدوري من API وحفظها في الكاش الدائم
                 self._cache_all_league_standings(league_id, season)
             
             return team_standings or {'current_rank': 'N/A', 'points': 0, 'form': ''}
@@ -2136,7 +2214,7 @@ class ProfessionalFootballApp(MDApp):
                             if team_standing.get('team', {}).get('id') == team_id:
                                 return {
                                     'team_id': team_id,
-                                    'current_rank': team_standing.get('rank'),
+                                    'current_rank': str(team_standing.get('rank')),  # ✅ تحويل إلى نص
                                     'points': team_standing.get('points'),
                                     'form': team_standing.get('form'),
                                     'played': team_standing.get('all', {}).get('played', 0),
@@ -2179,7 +2257,7 @@ class ProfessionalFootballApp(MDApp):
                             team_data = {
                                 'team_id': team_standing.get('team', {}).get('id'),
                                 'team_name': team_standing.get('team', {}).get('name'),
-                                'current_rank': team_standing.get('rank'),
+                                'current_rank': str(team_standing.get('rank')),  # ✅ تحويل إلى نص
                                 'points': team_standing.get('points'),
                                 'form': team_standing.get('form'),
                                 'played': team_standing.get('all', {}).get('played', 0),
@@ -2201,6 +2279,116 @@ class ProfessionalFootballApp(MDApp):
         except Exception as e:
             print(f"Error caching all league standings: {e}")
             return False
+
+    # ⭐ دالة محسنة لجلب ترتيب الموسم الماضي (الدوري بالكامل) - التعديل المهم هنا
+    def _fetch_last_season_standings_with_cache(self, team_id, league_id, season):
+        """جلب ترتيب الموسم الماضي من الكاش الدائم (الدوري بالكامل) مع البحث في الدوريات الأخرى"""
+        try:
+            # 1. إذا كان الموسم الحالي، ابحث في جدول الموسم الحالي
+            if season == datetime.now().year:  # الموسم الحالي
+                cached_league_data = self.storage.load_league_standings_from_cache(league_id, season)
+            else:  # الموسم الماضي
+                # 2. ابحث أولاً في نفس الدوري للموسم الماضي
+                cached_league_data = self.storage.load_last_season_standings_from_cache(league_id, season)
+                
+            if cached_league_data:
+                # البحث عن الفريق المطلوب في بيانات الدوري المخزنة
+                for team_data in cached_league_data:
+                    if team_data.get('team_id') == team_id:
+                        return team_data
+            
+            # 3. إذا لم يتم العثور على الفريق في نفس الدوري، ابحث في جميع كاش الموسم الماضي حسب team_id
+            print(f"🔍 البحث عن الفريق {team_id} في دوريات أخرى للموسم {season}")
+            
+            # محاولة البحث في قاعدة بيانات كاش الموسم الماضي حسب team_id
+            last_season_data = self._find_team_in_last_season_cache_by_id(team_id, season)
+            if last_season_data:
+                print(f"✅ تم العثور على الفريق {team_id} في دوري آخر: {last_season_data.get('league_name')}")
+                return last_season_data
+            
+            # 4. إذا لم يكن الدوري في الكاش، جلب الدوري بالكامل من API
+            print(f"🌐 جلب جميع فرق الدوري {league_id} للموسم {season}")
+            all_league_teams = self._fetch_all_league_teams_last_season(league_id, season)
+            
+            if all_league_teams:
+                # حفظ الدوري بالكامل في الكاش الدائم
+                if season == datetime.now().year:  # الموسم الحالي
+                    self.storage.save_league_standings_to_cache(league_id, season, all_league_teams)
+                else:  # الموسم الماضي
+                    self.storage.save_last_season_standings_to_cache(league_id, season, all_league_teams)
+                
+                # البحث عن الفريق المطلوب
+                for team_data in all_league_teams:
+                    if team_data.get('team_id') == team_id:
+                        return team_data
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error fetching last season standings with cache: {e}")
+            return None
+
+    def _find_team_in_last_season_cache_by_id(self, team_id, season):
+        """البحث عن الفريق في كاش الموسم الماضي حسب team_id"""
+        try:
+            team_data = self.storage.get_last_season_cache_by_team(team_id, season)
+            if team_data:
+                print(f"✅ وجد الفريق {team_id} في كاش الموسم الماضي")
+                # ⭐⭐ التعديل الجديد: إضافة علامة أن هذه البيانات من دورة بحث في دوريات أخرى
+                team_data['from_different_league'] = True
+                return team_data
+            
+            return None
+        except Exception as e:
+            print(f"Error finding team in last season cache: {e}")
+            return None
+
+    def _fetch_all_league_teams_last_season(self, league_id, last_season):
+        """جلب جميع فرق الدوري للموسم الماضي"""
+        try:
+            url = f"{self.base_url}/standings"
+            params = {
+                'league': league_id,
+                'season': last_season
+            }
+            
+            response = self.fetch_with_retry(url, params)
+            
+            if response and response.status_code == 200:
+                data = response.json()
+                
+                if data.get('response'):
+                    standings_data = data['response'][0]
+                    league_standings = standings_data.get('league', {}).get('standings', [])
+                    
+                    all_teams_data = []
+                    
+                    if league_standings and len(league_standings) > 0:
+                        for standing_group in league_standings:
+                            for team_standing in standing_group:
+                                team_data = {
+                                    'team_id': team_standing.get('team', {}).get('id'),
+                                    'team_name': team_standing.get('team', {}).get('name'),
+                                    'current_rank': str(team_standing.get('rank', 'N/A')),  # ✅ تحويل إلى نص
+                                    'points': team_standing.get('points', 'N/A'),
+                                    'played': team_standing.get('all', {}).get('played', 'N/A'),
+                                    'won': team_standing.get('all', {}).get('win'),
+                                    'draw': team_standing.get('all', {}).get('draw'),
+                                    'lost': team_standing.get('all', {}).get('lose'),
+                                    'season': last_season,
+                                    'league_id': league_id,
+                                    'league_name': standings_data.get('league', {}).get('name', '')
+                                }
+                                all_teams_data.append(team_data)
+                        
+                        print(f"✅ تم جلب {len(all_teams_data)} فريق من الدوري {league_id} للموسم {last_season}")
+                        return all_teams_data
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error fetching all league teams: {e}")
+            return None
 
     def load_favorites(self):
         self.favorites = self.storage.load_favorites()
@@ -2624,7 +2812,7 @@ class ProfessionalFootballApp(MDApp):
                             first_name_display = popup.home_team_name 
                             second_name_display = popup.away_team_name
                             
-                            # ⭐ الترتيب: كاش دائم أولاً
+                            # ⭐ الترتيب: التعديل المهم هنا - استخدام الدالة المحسنة
                             first_standings = self.fetch_team_standings_improved(home_team_id, league_id, season)
                             second_standings = self.fetch_team_standings_improved(away_team_id, league_id, season)
                         else:
@@ -2711,31 +2899,37 @@ class ProfessionalFootballApp(MDApp):
             print(f"❌ Error in fetch_team_last_matches: {e}")
             return "green:0:0"
 
-    # ⭐ دالة محسنة لجلب ترتيب الفريق مع الكاش الدائم للموسم الماضي
+    # ⭐ دالة محسنة لجلب ترتيب الفريق مع الكاش الدائم للموسم الماضي (الدوري بالكامل)
     def fetch_team_standings_improved(self, team_id, league_id, season):
         try:
-            # 1. الترتيب الحالي (من الكاش الدائم)
-            current_standings = self.fetch_team_standings_with_cache(team_id, league_id, season)
+            # ⭐ التعديل البسيط والمهم هنا:
+            # استخدم نفس الدالة للموسم الحالي والموسم الماضي
             
-            # 2. الترتيب الموسم الماضي (كاش دائم)
+            # 1. جلب الترتيب الحالي من الكاش
+            current_data = self._fetch_last_season_standings_with_cache(team_id, league_id, season)
+            
+            if current_data:
+                current_rank = str(current_data.get('current_rank', 'N/A'))  # ✅ تحويل إلى نص هنا
+            else:
+                current_rank = 'N/A'
+            
+            # 2. جلب الترتيب الموسم الماضي
             last_season = season - 1
-            last_standings = self._fetch_last_season_standings_with_cache(team_id, league_id, last_season)
+            last_season_data = self._fetch_last_season_standings_with_cache(team_id, league_id, last_season)
             
-            if not last_standings:
-                # إذا لم يلعب في نفس الدوري الموسم الماضي
-                last_standings = self._find_team_in_all_leagues_last_season(team_id, last_season)
-            
-            last_rank_display, last_rank_type = self._determine_last_rank_display(last_standings, current_standings)
+            # ⭐ التعديل المهم: تمرير current_data بدلاً من None
+            last_rank_display, last_rank_type = self._determine_last_rank_display(last_season_data, current_data)
             
             combined_standings = {
-                'current_rank': current_standings.get('current_rank', 'N/A') if current_standings else 'N/A',
+                'current_rank': current_rank,
                 'last_rank': last_rank_display,
                 'last_rank_type': last_rank_type,
-                'played': current_standings.get('played', 'N/A') if current_standings else 'N/A',
+                'played': current_data.get('played', 'N/A') if current_data else 'N/A',
                 'current_season': season,
                 'last_season': last_season
             }
             
+            print(f"✅ جلب الترتيب: الحالي={current_rank}, الماضي={last_rank_display}")
             return combined_standings
                 
         except Exception as e:
@@ -2749,126 +2943,32 @@ class ProfessionalFootballApp(MDApp):
                 'last_season': season - 1
             }
 
-    def _fetch_last_season_standings_with_cache(self, team_id, league_id, season):
-        """جلب ترتيب الموسم الماضي من الكاش الدائم"""
-        # 1. تحقق من الكاش الدائم أولاً
-        cached_data = self.storage.load_last_season_standings_from_cache(team_id, league_id, season)
-        if cached_data:
-            return cached_data
-        
-        # 2. إذا لم يكن في الكاش، جلب من API
-        standings = self._fetch_season_standings(team_id, league_id, season)
-        
-        if not standings:
-            # 3. إذا لم يلعب في نفس الدوري، ابحث في جميع الدوريات
-            standings = self._find_team_in_all_leagues_last_season(team_id, season)
-        
-        # 4. إذا حصلنا على بيانات، احفظها في الكاش الدائم
-        if standings:
-            self.storage.save_last_season_standings_to_cache(
-                team_id, league_id, season, standings
-            )
-        
-        return standings
-
-    def _fetch_season_standings(self, team_id, league_id, season):
-        """جلب ترتيب فريق محدد من API لموسم معين"""
-        try:
-            url = f"{self.base_url}/standings"
-            params = {
-                'league': league_id,
-                'season': season,
-                'team': team_id
-            }
-            
-            response = self.fetch_with_retry(url, params)
-            
-            if response and response.status_code == 200:
-                data = response.json()
-                
-                if data.get('response'):
-                    standings_data = data['response'][0]
-                    league_standings = standings_data.get('league', {}).get('standings', [])
-                    
-                    if league_standings and len(league_standings) > 0:
-                        for standing_group in league_standings:
-                            for team_standing in standing_group:
-                                if team_standing.get('team', {}).get('id') == team_id:
-                                    return {
-                                        'current_rank': team_standing.get('rank', 'N/A'),
-                                        'points': team_standing.get('points', 'N/A'),
-                                        'played': team_standing.get('all', {}).get('played', 'N/A'),
-                                        'won': team_standing.get('all', {}).get('win'),
-                                        'draw': team_standing.get('all', {}).get('draw'),
-                                        'lost': team_standing.get('all', {}).get('lose'),
-                                        'season': season,
-                                        'league_id': league_id,
-                                        'team_id': team_id,
-                                        'team_name': team_standing.get('team', {}).get('name', '')
-                                    }
-            
-            return None
-            
-        except Exception as e:
-            print(f"Error fetching season standings: {e}")
-            return None
-
-    def _find_team_in_all_leagues_last_season(self, team_id, last_season):
-        """البحث عن الفريق في جميع الدوريات الموسم الماضي"""
-        try:
-            url = f"{self.base_url}/leagues"
-            params = {'team': team_id, 'season': last_season}
-            
-            response = self.fetch_with_retry(url, params)
-            
-            if response and response.status_code == 200:
-                data = response.json()
-                if data.get('response'):
-                    for league_data in data['response']:
-                        league_info = league_data.get('league', {})
-                        league_id = league_info.get('id')
-                        
-                        standings = self._fetch_season_standings(team_id, league_id, last_season)
-                        if standings:
-                            # حفظ في الكاش الدائم
-                            self.storage.save_last_season_standings_to_cache(
-                                team_id, league_id, last_season, standings
-                            )
-                            return standings
-            
-            return None
-            
-        except Exception as e:
-            print(f"Error finding team in all leagues: {e}")
-            return None
-
     def _determine_last_rank_display(self, last_standings, current_standings):
+        """تحديد كيفية عرض ترتيب الموسم الماضي مع التحقق من league_id"""
         if not last_standings:
             return "N/A", "normal"
         
-        last_rank = last_standings.get('current_rank', 'N/A')
-        last_league = last_standings.get('league_name', '')
-        current_league = current_standings.get('league_name', '') if current_standings else ''
+        last_rank = str(last_standings.get('current_rank', 'N/A'))  # ✅ تحويل إلى نص
+        last_league_id = last_standings.get('league_id', None)
         
-        if last_league == current_league:
-            return str(last_rank), "normal"
+        # ⭐⭐ التعديل الجديد: إذا كانت البيانات من دورة بحث في دوريات أخرى
+        if last_standings.get('from_different_league', False):
+            return f"↔{last_rank}", "different_league_blue"  # ⭐ إرجاع باللون الأزرق
         
-        if last_rank == 'N/A':
-            return "NEW", "new_team"
+        if not current_standings:
+            # الفريق موجود في الموسم الماضي فقط
+            if last_rank == "N/A":
+                return "NEW", "new_team"
+            return last_rank, "normal"
         
-        if last_league != current_league:
-            try:
-                rank_int = int(last_rank)
-                if 1 <= rank_int <= 6:
-                    return f"↑{last_rank}", "promoted_green"
-                elif 6 < rank_int <= 20:
-                    return f"↓{last_rank}", "relegated_red"
-                else:
-                    return str(last_rank), "normal"
-            except:
-                return str(last_rank), "normal"
+        current_league_id = current_standings.get('league_id', None)
         
-        return str(last_rank), "normal"
+        # إذا الموسم الماضي عنده league_id و مختلف عن الدوري الحالي → عرض الرمز فقط
+        if last_league_id is not None and last_league_id != current_league_id:
+            return f"↔{last_rank}", "moved_league"
+        
+        # كل الحالات الأخرى نعرض الرتبة فقط
+        return last_rank, "normal"
 
     def is_hidden(self, match_id):
         return any(m.get('id') == match_id for m in self.hidden_matches)
@@ -3233,26 +3333,30 @@ class ProfessionalFootballApp(MDApp):
             popup.second_team_goals_against = second_against
             
             if first_standings:
-                popup.first_team_current_rank = first_standings.get('current_rank', 'N/A')
-                popup.first_team_last_rank = first_standings.get('last_rank', 'N/A')
-                popup.first_team_points = first_standings.get('points', 'N/A')
-                popup.first_team_played = first_standings.get('played', 'N/A')
+                popup.first_team_current_rank = str(first_standings.get('current_rank', 'N/A'))  # ✅ تحويل إلى نص
+                popup.first_team_last_rank = str(first_standings.get('last_rank', 'N/A'))  # ✅ تحويل إلى نص
+                popup.first_team_points = str(first_standings.get('points', 'N/A'))  # ✅ تحويل إلى نص
+                popup.first_team_played = str(first_standings.get('played', 'N/A'))  # ✅ تحويل إلى نص
+                popup.first_last_rank_color = str(first_standings.get('last_rank_type', 'normal'))  # ✅ تعيين نوع اللون للفريق الأول
             else:
                 popup.first_team_current_rank = 'N/A'
                 popup.first_team_last_rank = 'N/A'
                 popup.first_team_points = 'N/A'
                 popup.first_team_played = 'N/A'
+                popup.first_last_rank_color = 'normal'
             
             if second_standings:
-                popup.second_team_current_rank = second_standings.get('current_rank', 'N/A')
-                popup.second_team_last_rank = second_standings.get('last_rank', 'N/A')
-                popup.second_team_points = second_standings.get('points', 'N/A')
-                popup.second_team_played = second_standings.get('played', 'N/A')
+                popup.second_team_current_rank = str(second_standings.get('current_rank', 'N/A'))  # ✅ تحويل إلى نص
+                popup.second_team_last_rank = str(second_standings.get('last_rank', 'N/A'))  # ✅ تحويل إلى نص
+                popup.second_team_points = str(second_standings.get('points', 'N/A'))  # ✅ تحويل إلى نص
+                popup.second_team_played = str(second_standings.get('played', 'N/A'))  # ✅ تحويل إلى نص
+                popup.second_last_rank_color = str(second_standings.get('last_rank_type', 'normal'))  # ✅ تعيين نوع اللون للفريق الثاني
             else:
                 popup.second_team_current_rank = 'N/A'
                 popup.second_team_last_rank = 'N/A'
                 popup.second_team_points = 'N/A'
                 popup.second_team_played = 'N/A'
+                popup.second_last_rank_color = 'normal'
                 
         except Exception as e:
             print(f"Error updating popup stats: {e}")
@@ -3819,6 +3923,7 @@ class ProfessionalFootballApp(MDApp):
             
             # جداول الكاش المطلوب مسحها فقط
             tables_to_clear = ['scheduled_matches_cache', 'league_standings_cache']
+            # ⭐ لاحظ: last_season_standings_cache لم يتم تضمينه
             
             success, cleared_tables = self.storage.clear_specific_cache(tables=tables_to_clear)
             
@@ -3838,6 +3943,7 @@ class ProfessionalFootballApp(MDApp):
                     
                     if last_season_count > 0:
                         print(f"✅ Last season cache preserved: {last_season_count} records")
+                        self.show_snackbar(f"✅ الموسم الماضي محفوظ ({last_season_count} دوري)", duration=3)
                     else:
                         print("ℹ️ No last season cache found")
                         
