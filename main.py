@@ -1283,7 +1283,7 @@ KV = '''
                     MDLabel:
                         text: "(" + root.first_team_last_rank + ")"
                         theme_text_color: 'Custom'
-                        text_color: get_color_from_hex("#2196F3") if root.first_last_rank_color == "different_league_blue" else (get_color_from_hex("#AAAAAA") if root.first_last_rank_color == "normal" else (get_color_from_hex("#00FF00") if root.first_last_rank_color == "new_team" else get_color_from_hex("#FF9800")))
+                        text_color: get_color_from_hex("#2196F3") if root.first_last_rank_color == "different_league_blue" else (get_color_from_hex("#00FF00") if root.first_last_rank_color == "normal" else (get_color_from_hex("#00FF00") if root.first_last_rank_color == "new_team" else get_color_from_hex("#FF0000")))
                         font_size: "15sp"
                         halign: 'center'
             
@@ -1326,7 +1326,7 @@ KV = '''
                         MDLabel:
                             text: "(" + root.second_team_last_rank + ")"
                             theme_text_color: 'Custom'
-                            text_color: get_color_from_hex("#2196F3") if root.second_last_rank_color == "different_league_blue" else (get_color_from_hex("#AAAAAA") if root.second_last_rank_color == "normal" else (get_color_from_hex("#00FF00") if root.second_last_rank_color == "new_team" else get_color_from_hex("#FF9800")))
+                            text_color: get_color_from_hex("#2196F3") if root.second_last_rank_color == "different_league_blue" else (get_color_from_hex("#00FF00") if root.second_last_rank_color == "normal" else (get_color_from_hex("#00FF00") if root.second_last_rank_color == "new_team" else get_color_from_hex("#FF0000")))
                             font_size: "15sp"
                             halign: 'center'
 
@@ -1675,6 +1675,7 @@ class ProfessionalFootballApp(MDApp):
     calendar_mode = BooleanProperty(False)
     
     filter_ns_perfect_1_1_enabled = BooleanProperty(False)
+    filter_ns_perfect_2_2_enabled = BooleanProperty(False)  # ⭐ الخاصية الجديدة
     
     # ⭐ الخصائص الجديدة للدفعات
     leagues_per_batch = NumericProperty(10)  # عدد الدوريات في كل دفعة
@@ -1783,7 +1784,7 @@ class ProfessionalFootballApp(MDApp):
                 print("⚠️ لا دوريات مختارة للكاش، سيتم تخطي الكاش")
 
             # ⭐⭐ إضافة شرط هنا: إذا كان الفلتر active، لا تجلب من API
-            if self.filter_ns_perfect_1_1_enabled:
+            if self.filter_ns_perfect_1_1_enabled or self.filter_ns_perfect_2_2_enabled:
                 print("🚫 الفلتر active - الاكتفاء بالكاش فقط")
                 # إزالة التكرارات من الكاش
                 unique_matches = []
@@ -1902,9 +1903,11 @@ class ProfessionalFootballApp(MDApp):
 
     def load_filter_state(self):
         self.filter_ns_perfect_1_1_enabled = self.storage.load_filter_state('filter_ns_perfect_1_1_enabled')
+        self.filter_ns_perfect_2_2_enabled = self.storage.load_filter_state('filter_ns_perfect_2_2_enabled')  # ⭐ خطوة جديدة
             
     def save_filter_state(self):
         self.storage.save_filter_state('filter_ns_perfect_1_1_enabled', self.filter_ns_perfect_1_1_enabled)
+        self.storage.save_filter_state('filter_ns_perfect_2_2_enabled', self.filter_ns_perfect_2_2_enabled)  # ⭐ خطوة جديدة
 
     def filter_ns_perfect_1_1(self, match_data):
         try:
@@ -2048,6 +2051,199 @@ class ProfessionalFootballApp(MDApp):
         except Exception as e:
             print(f"NS Perfect 1_1 Filter Error: {e}")
             return "❌ no (System Error)"
+
+    def filter_ns_perfect_2_2(self, match_data):
+        """فلتر NS Perfect 2_2 المحسّن مع التحقق من المجموعات المحظورة"""
+        try:
+            # تعريف المجموعات المحظورة
+            forbidden_groups = [
+                {
+                    'current_rank': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'last_season': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15), (5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (10, 11), (10, 12), (10, 13), (10, 14)},
+            },
+            {
+                    'current_rank': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16)},
+                    'last_season': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (5, 17), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16), (6, 17), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (13, 14), (13, 15), (14, 15), (14, 16)},
+            },
+            {
+                    'current_rank': {(7, 8), (7, 9), (8, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 14)},
+                    'last_season': {(1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 13), (2, 10), (3, 10), (3, 11), (3, 12), (4, 10), (4, 11), (4, 12), (5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (5, 17), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16), (6, 17), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (13, 14), (13, 15), (14, 15), (14, 16)},
+            },
+            {
+                    'current_rank': {(9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (10, 17), (10, 18), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (12, 18), (13, 14), (13, 15), (13, 16), (13, 17), (13, 18), (14, 15), (14, 16), (14, 17), (14, 18)},
+                    'last_season': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (5, 17), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16), (6, 17), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (9, 17), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (10, 17), (10, 18), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (13, 14), (13, 15), (13, 16), (14, 15), (14, 16), (14, 17), (14, 18)},
+            },
+            {
+                    'current_rank': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (6, 10), (6, 11), (6, 12), (7, 10), (7, 11), (7, 12), (8, 10), (8, 11), (8, 12)},
+                    'last_season': {(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (4, 3), (5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (11, 4), (10, 4)},
+            },
+            {
+                    'current_rank': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'last_season': {(6, 5), (7, 5), (7, 6), (8, 5), (8, 6), (9, 5), (9, 6), (10, 5), (10, 6), (11, 5), (11, 6), (12, 5), (12, 6)},
+            },
+            {
+                    'current_rank': {(1, 7), (1, 8), (1, 9), (2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15), (4, 16)},
+                    'last_season': {(9, 7), (10, 8), (10, 9), (11, 7), (11, 8), (11, 9), (12, 7), (12, 8), (12, 9), (13, 7), (13, 8), (13, 9), (14, 7), (14, 8), (14, 9), (15, 7), (15, 8), (15, 9), (16, 9), (10, 11), (11, 10), (12, 10), (12, 11), (13, 10), (13, 11), (13, 12), (14, 10), (14, 11), (14, 12), (14, 13), (15, 10), (15, 11), (15, 12), (15, 13), (15, 14), (16, 10), (16, 11), (16, 12), (16, 13), (16, 14), (16, 15)},
+            },
+            {
+                    'current_rank': {(3, 2), (4, 2), (4, 3), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (11, 4), (10, 4)},
+                    'last_season': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+            },
+            {
+                    'current_rank': {(11, 7), (10, 7), (9, 7), (11, 8), (10, 8), (14, 9), (13, 9), (12, 9), (11, 9), (15, 10), (14, 10), (13, 10), (12, 10), (13, 11), (13, 12), (12, 11)},
+                    'last_season': {(3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (4, 5), (4, 6), (4, 7), (4, 8)},
+            },
+            {
+                    'current_rank': {(10, 6), (9, 6), (8, 6), (7, 6), (10, 5), (9, 5), (8, 5), (7, 5), (6, 5)},
+                    'last_season': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (4, 5), (4, 6), (4, 7), (4, 8)},
+            },
+            {
+
+                    'current_rank': {(5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (11, 4), (10, 4), (10, 5), (10, 6), (10, 7), (10, 8), (10, 9), (9, 5), (9, 5), (9, 6), (9, 7), (9, 8), (8, 5), (8, 6), (8, 7), (7, 5), (7, 6), (6, 5)},
+                    'last_season': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16)},
+            },
+            {
+                    'current_rank': {(6, 4), (7, 6), (10, 6), (10, 7), (10, 9), (11, 6), (11, 7), (11, 9), (11, 10), (12, 6), (12, 7), (12, 9), (13, 7), (14, 9), (15, 9), (16, 9), (11, 10), (12, 10), (12, 11), (13, 10), (13, 11), (13, 12), (14, 10), (14, 11), (14, 12), (14, 13), (15, 10), (15, 11), (15, 12), (15, 13), (15, 14), (16, 10), (16, 11), (16, 12), (16, 13), (16, 14), (16, 15), (17, 15)},
+                    'last_season': {(7, 12), (7, 13), (7, 14), (7, 15), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (10, 17), (10, 18), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 14), (12, 15), (12, 16), (12, 17), (12, 18), (13, 15), (13, 16)},
+            },
+            {
+                    'current_rank': {(7, 6), (8, 6), (9, 6), (10, 6), (11, 6), (12, 6)},
+                    'last_season': {(11, 5), (10, 5), (9, 5), (8, 5), (7, 5), (12, 6), (11, 6), (10, 6), (9, 6), (8, 7), (8, 6), (7, 6), (11, 8), (10, 8), (9, 8), (13, 9), (12, 9), (11, 9), (10, 9), (15, 10), (15, 11), (15, 12), (15, 13)},
+            },
+            {
+                    'current_rank': {(13, 7), (12, 7), (11, 7), (10, 7), (9, 7)},
+                    'last_season': {(6, 2), (5, 2), (4, 2), (8, 3), (7, 3), (6, 3), (5, 3), (8, 4), (7, 4), (6, 4), (5, 4)},
+            },
+            {
+                    'current_rank': {(12, 8), (11, 8), (10, 8), (9, 8)},
+                    'last_season': {(6, 2), (5, 2), (4, 2), (9, 3), (8, 3), (7, 3), (6, 3), (5, 3), (8, 4), (7, 4), (6, 4), (5, 4), (4, 1), (3, 1)},
+            },
+            {
+                    'current_rank': {(16, 8), (15, 8), (14, 8), (13, 8), (12, 8), (11, 8), (10, 8), (9, 8)},
+                    'last_season': {(11, 5), (10, 5), (9, 5), (8, 5), (7, 5), (12, 6), (11, 6), (11, 10), (10, 6), (9, 6), (8, 6), (7, 6), (12, 8), (11, 8), (10, 9), (10, 8), (9, 8), (15, 9), (14, 9), (13, 9), (12, 9), (11, 9), (10, 9), (15, 10), (15, 11), (15, 12), (15, 13), (16, 11), (14, 10), (12, 10)},
+            },
+            {
+                    'current_rank': {(14, 10), (13, 10), (12, 10), (11, 10), (9, 10), (14, 11), (13, 11), (12, 11), (14, 12), (13, 12)},
+                    'last_season': {(14, 7), (15, 7), (13, 7), (12, 7), (14, 8), (15, 8), (13, 8), (12, 8), (15, 9), (11, 8), (11, 7), (14, 9), (13, 9), (12, 9), (11, 9), (12, 5), (11, 5), (10, 5), (9, 5), (8, 5), (7, 5), (6, 5), (10, 4), (9, 4), (8, 4), (7, 4), (6, 4), (5, 4)},
+            },
+            {
+                    'current_rank': {(2, 11), (2, 12), (2, 10), (2, 9), (2, 8), (2, 7), (2, 6), (2, 5), (2, 4), (3, 12), (3, 11), (3, 10), (3, 8), (3, 9), (3, 7), (3, 6), (3, 5), (3, 4), (3, 3), (3, 2), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8), (4, 7), (4, 6), (4, 5), (4, 3), (5, 4), (5, 6), (5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 4), (6, 5), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 6), (7, 8), (7, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 7), (8, 9), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 8), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 9), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (11, 13), (11, 14), (11, 15), (11, 16)},
+                    'last_season': {(80, 80)},
+            },
+            {
+                    'current_rank': {(7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (7, 16), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (7, 4), (8, 4), (7, 5), (8, 5), (7, 6), (8, 6), (9, 6), (8, 7), (9, 7), (10, 7), (9, 8), (10, 8), (11, 8), (10, 9), (11, 9), (11, 10), (12, 10), (12, 11), (13, 11), (13, 12), (14, 12), (15, 12)},
+                    'last_season': {(80, 9), (80, 10), (80, 11), (80, 12), (80, 13), (80, 14)},
+            },
+            {
+                    'current_rank': {(9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 12), (10, 13), (10, 14), (10, 15), (11, 13), (11, 14), (11, 15), (12, 14), (12, 15), (13, 15), (5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (1, 9), (1, 8), (1, 10), (1, 11), (1, 12), (2, 11), (2, 12), (2, 10), (2, 9), (2, 8), (3, 12), (3, 11), (3, 10), (3, 8), (3, 9), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8)},
+                    'last_season': {(80, 9), (80, 10), (80, 11), (80, 12), (80, 13), (80, 14), (80, 15), (80, 16)},
+            },
+            {
+                    'current_rank': {(7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (7, 4), (8, 4), (7, 5), (8, 5), (7, 6), (8, 6), (9, 6), (8, 7), (9, 7), (10, 7), (9, 8), (10, 8), (11, 8), (10, 9), (11, 9), (11, 10), (12, 10), (12, 11), (13, 11), (13, 12), (14, 12), (15, 12), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (1, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 9), (2, 10), (2, 11), (2, 12), (2, 13), (3, 9), (3, 10), (3, 11), (3, 12), (3, 13), (4, 9), (4, 10), (4, 11), (4, 12), (4, 13), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (3, 5), (3, 6), (3, 7), (3, 8), (4, 5), (4, 6), (4, 7), (4, 8)},
+                    'last_season': {(80, 3), (80, 4), (80, 5), (80, 6), (80, 7), (80, 8)},
+            },
+            {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (5, 17), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (10, 8), (11, 8), (12, 8), (10, 9), (11, 9), (12, 9), (11, 10), (12, 10), (13, 10), (12, 11), (13, 11), (13, 12), (14, 12), (15, 12), (9, 12), (9, 13), (9, 14), (9, 15), (10, 12), (10, 13), (10, 14)},
+                    'last_season': {(9, 80), (10, 80), (11, 80), (12, 80), (13, 80), (14, 80)},
+            },
+            {
+                    'current_rank': {(1, 6), (1, 7), (1, 8), (1, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 11), (2, 12), (2, 13), (2, 6), (2, 7), (2, 8), (2, 9), (3, 6), (3, 7), (3, 8), (3, 9), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (1, 6), (1, 7), (1, 8), (1, 9), (11, 6), (11, 7), (11, 8), (11, 9), (12, 8), (12, 9), (1, 9), (11, 9), (12, 9), (13, 9), (1, 10), (2, 11), (3, 10), (3, 11), (3, 12), (4, 10), (4, 11), (4, 12), (4, 13), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (10, 12), (10, 13), (10, 14), (10, 15), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (12, 14), (12, 15), (12, 16), (12, 17)},
+                    'last_season': {(5, 80), (6, 80), (7, 80), (8, 80)},
+            },
+            {
+                    'current_rank': {(1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (1, 14), (2, 10), (2, 11), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (5, 6), (5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 8), (7, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (7, 16), (8, 9), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15)},
+                    'last_season': {(2, 80), (3, 80), (4, 80)},
+            },
+            {
+                    'current_rank': {(7, 8), (7, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 9), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14)},
+                    'last_season': {(8, 90), (9, 90), (10, 90), (11, 90)},
+            },
+            {
+                    'current_rank': {(11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 14), (12, 15), (12, 16), (12, 17), (12, 18), (13, 15), (13, 16), (13, 17), (13, 18), (14, 15), (14, 16), (14, 17), (14, 18)},
+                    'last_season': {(90, 3), (90, 4), (90, 5), (90, 6), (90, 7), (90, 8), (90, 9)},
+            },
+            {
+                    'current_rank': {(8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (10, 17), (10, 18), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (11, 19), (11, 20), (12, 14), (12, 15), (12, 16), (12, 17), (12, 18), (12, 19), (12, 20), (13, 15), (13, 16), (13, 17), (13, 18), (13, 19), (13, 20), (14, 15), (14, 16), (14, 17), (14, 18), (1, 9), (11, 6), (11, 7), (11, 8), (11, 9), (12, 9), (11, 9), (12, 9), (13, 9), (11, 10), (12, 11), (13, 10), (13, 11), (13, 12), (14, 10), (14, 11), (14, 12), (14, 13), (15, 10), (15, 11), (15, 12), (15, 13), (15, 14)},
+                    'last_season': {(8, 90), (9, 90), (10, 90)},
+            },
+            {
+                    'current_rank': {(7, 4), (7, 5), (8, 4), (8, 5), (9, 5), (9, 6), (9, 7), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (1, 6), (1, 7), (1, 8), (1, 9), (11, 6), (11, 7), (11, 8), (11, 9), (12, 8), (12, 9), (1, 9), (1, 8), (1, 7), (1, 6), (1, 5), (1, 4), (1, 3), (2, 10), (2, 4), (2, 9), (2, 8), (2, 7), (2, 6), (2, 5), (3, 12), (3, 13), (3, 14), (3, 11), (3, 10), (3, 8), (3, 9), (3, 7), (3, 6), (4, 14), (4, 13), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8), (4, 7), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 5), (7, 5), (8, 5), (9, 5), (9, 6), (9, 7)},
+                    'last_season': {(3, 90), (4, 90), (5, 90), (6, 90), (7, 90)},
+            },
+            {
+                    'current_rank': {(1, 10), (1, 11), (1, 9), (1, 8), (1, 7), (2, 11), (2, 10), (2, 9), (2, 8), (2, 7), (3, 12), (3, 13), (3, 14), (3, 11), (3, 10), (3, 8), (3, 9), (3, 7), (4, 14), (4, 13), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8), (4, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14)},
+                    'last_season': {(8, 90), (9, 90), (10, 90), (11, 90), (12, 90), (13, 90)},
+            },
+            {
+                    'current_rank': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 11), (2, 10), (2, 12), (2, 13), (2, 14), (3, 15), (3, 16), (3, 13), (3, 14), (3, 12), (3, 11), (3, 10), (4, 14), (4, 13), (4, 12), (4, 11), (4, 10), (4, 15), (4, 16), (5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (9, 11), (9, 12), (9, 13), (9, 14), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 14), (12, 15), (12, 16), (12, 17)},
+                    'last_season': {(90, 10), (90, 11), (90, 12), (90, 13), (90, 14), (90, 15), (90, 16), (90, 17), (90, 18)},
+            },
+            {
+                    'current_rank': {(1, 6), (1, 5), (1, 4), (1, 3), (2, 3), (2, 4), (2, 6), (2, 5), (3, 4), (3, 5), (3, 6), (4, 5), (4, 7), (4, 6), (1, 13), (1, 12), (1, 11), (1, 10), (1, 9), (1, 8), (1, 7), (2, 11), (2, 13), (2, 12), (2, 10), (2, 3), (2, 4), (2, 9), (2, 8), (2, 7), (2, 6), (2, 5), (3, 12), (3, 13), (3, 14), (3, 11), (3, 10), (3, 8), (3, 9), (4, 15), (4, 16), (4, 14), (4, 13), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8), (4, 7), (5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 6), (8, 6), (9, 6), (9, 7), (8, 7), (10, 6), (10, 7), (10, 8), (10, 9), (11, 6), (11, 7), (11, 8), (11, 9), (12, 8), (12, 9), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15)},
+                    'last_season': {(90, 3), (90, 4), (90, 5), (90, 6), (90, 7), (90, 8), (90, 9)},
+                }
+            ]    
+            
+            # استخراج البيانات الأساسية
+            league_id = match_data.get('league_id')
+            season = match_data.get('season', datetime.now().year)
+            
+            try:
+                season = int(season)
+                last_season = season - 1
+            except:
+                return "❌ no (Invalid season format)"
+
+            home_team_id = match_data.get('home_team_id')
+            away_team_id = match_data.get('away_team_id')
+            
+
+            # جلب الترتيب الحالي
+            home_current_data = self.fetch_team_standings_with_cache(home_team_id, league_id, season)
+            away_current_data = self.fetch_team_standings_with_cache(away_team_id, league_id, season)
+            
+            if not home_current_data or not away_current_data:
+                return "❌ no (Missing current season data)"
+
+            home_current_rank = home_current_data.get('current_rank', 'N/A')
+            away_current_rank = away_current_data.get('current_rank', 'N/A')
+            
+            # جلب الترتيب الموسم الماضي
+            home_last_data = self._fetch_last_season_standings_with_cache(home_team_id, league_id, last_season)
+            away_last_data = self._fetch_last_season_standings_with_cache(away_team_id, league_id, last_season)
+            
+            home_last_rank = home_last_data.get('current_rank', 'N/A') if home_last_data else 'N/A'
+            away_last_rank = away_last_data.get('current_rank', 'N/A') if away_last_data else 'N/A'
+            
+            # تحويل الأرقام مع التحقق
+            try:
+                ch = int(''.join(filter(str.isdigit, str(home_current_rank))) or 0)
+                ca = int(''.join(filter(str.isdigit, str(away_current_rank))) or 0)
+                lh = int(''.join(filter(str.isdigit, str(home_last_rank))) or 0)
+                la = int(''.join(filter(str.isdigit, str(away_last_rank))) or 0)
+            except ValueError:
+                return "❌ no (Invalid rank format)"
+            
+            # إنشاء الأزواج
+            current_pair = (ch, ca)
+            last_pair = (lh, la)
+            current_pair_rev = (ca, ch)
+            last_pair_rev = (la, lh)
+            
+            # التحقق من المجموعات المحظورة
+            for group in forbidden_groups:
+                if (
+                    (current_pair in group['current_rank'] and last_pair in group['last_season'])
+                    or
+                    (current_pair_rev in group['current_rank'] and last_pair_rev in group['last_season'])
+                ):
+                    return f"❌ no (Forbidden combination - Current: {current_pair}, Last: {last_pair})"
+            
+            return "✅ yes (Current ranks: {current_pair}, Last season ranks: {last_pair})"
+            
+        except Exception as e:
+            print(f"ERROR in filter_ns_perfect_2_2: {e} for match {match_data.get('id')}")
+            return f"❌ no (Error: {str(e)[:50]})"
 
     def fetch_team_last_goals_for_filter_from_api(self, team_id, league_id, season, is_home_team, matches_count=3):
         """جلب الأهداف المسجلة في آخر مباريات من API"""
@@ -2215,12 +2411,6 @@ class ProfessionalFootballApp(MDApp):
                                 return {
                                     'team_id': team_id,
                                     'current_rank': str(team_standing.get('rank')),  # ✅ تحويل إلى نص
-                                    'points': team_standing.get('points'),
-                                    'form': team_standing.get('form'),
-                                    'played': team_standing.get('all', {}).get('played', 0),
-                                    'won': team_standing.get('all', {}).get('win', 0),
-                                    'draw': team_standing.get('all', {}).get('draw', 0),
-                                    'lost': team_standing.get('all', {}).get('lose', 0)
                                 }
             
             return None
@@ -2258,14 +2448,6 @@ class ProfessionalFootballApp(MDApp):
                                 'team_id': team_standing.get('team', {}).get('id'),
                                 'team_name': team_standing.get('team', {}).get('name'),
                                 'current_rank': str(team_standing.get('rank')),  # ✅ تحويل إلى نص
-                                'points': team_standing.get('points'),
-                                'form': team_standing.get('form'),
-                                'played': team_standing.get('all', {}).get('played', 0),
-                                'won': team_standing.get('all', {}).get('win', 0),
-                                'draw': team_standing.get('all', {}).get('draw', 0),
-                                'lost': team_standing.get('all', {}).get('lose', 0),
-                                'goals_for': team_standing.get('all', {}).get('goals', {}).get('for', 0),
-                                'goals_against': team_standing.get('all', {}).get('goals', {}).get('against', 0)
                             }
                             all_teams_data.append(team_data)
                     
@@ -2370,11 +2552,6 @@ class ProfessionalFootballApp(MDApp):
                                     'team_id': team_standing.get('team', {}).get('id'),
                                     'team_name': team_standing.get('team', {}).get('name'),
                                     'current_rank': str(team_standing.get('rank', 'N/A')),  # ✅ تحويل إلى نص
-                                    'points': team_standing.get('points', 'N/A'),
-                                    'played': team_standing.get('all', {}).get('played', 'N/A'),
-                                    'won': team_standing.get('all', {}).get('win'),
-                                    'draw': team_standing.get('all', {}).get('draw'),
-                                    'lost': team_standing.get('all', {}).get('lose'),
                                     'season': last_season,
                                     'league_id': league_id,
                                     'league_name': standings_data.get('league', {}).get('name', '')
@@ -2421,6 +2598,13 @@ class ProfessionalFootballApp(MDApp):
         self.show_snackbar(f"NS Filter (Perfect 1_1) is now {status}")
         self.show_profile()  
 
+    def toggle_filter_ns_perfect_2_2(self):
+        self.filter_ns_perfect_2_2_enabled = not self.filter_ns_perfect_2_2_enabled
+        self.save_filter_state()
+        status = "Enabled" if self.filter_ns_perfect_2_2_enabled else "Disabled"
+        self.show_snackbar(f"NS Filter (Perfect 2_2) is now {status}")
+        self.show_profile()  # لتحديث العرض
+
     def on_calendar_date_selected(self, selected_date):
         self.current_calendar_date = selected_date
         self.calendar_mode = True
@@ -2460,7 +2644,6 @@ class ProfessionalFootballApp(MDApp):
             try:
                 fixture = match.get('fixture', {})
                 teams = match.get('teams', {})
-                goals = match.get('goals', {})
                 league = match.get('league', {})
                 
                 home_team = teams.get('home', {})
@@ -2468,15 +2651,8 @@ class ProfessionalFootballApp(MDApp):
                 
                 home_team_name = home_team.get('name', 'Home Team')
                 away_team_name = away_team.get('name', 'Away Team')
-                
-                full_home_team_name = home_team.get('name', 'Home Team')
-                full_away_team_name = away_team.get('name', 'Away Team')
-                
-                home_score = goals.get('home')
-                away_score = goals.get('away')
-                
+                                
                 status = fixture.get('status', {}).get('short', 'NS')
-                elapsed = fixture.get('status', {}).get('elapsed')
                 
                 processed_match = {
                     'id': fixture.get('id'),
@@ -2484,19 +2660,12 @@ class ProfessionalFootballApp(MDApp):
                     'league_id': league.get('id'),
                     'season': league.get('seasons', [{}])[0].get('year', datetime.now().year) if league.get('seasons') else datetime.now().year,
                     'home_team': home_team_name,
-                    'full_home_team': full_home_team_name,
                     'home_team_id': home_team.get('id'),
                     'away_team': away_team_name,
-                    'full_away_team': full_away_team_name,
                     'away_team_id': away_team.get('id'),
-                    'home_score': home_score,
-                    'away_score': away_score,
+
                     'status': status,
-                    'elapsed': elapsed,
                     'time': fixture.get('date', ''),
-                    'events': match.get('events', []),
-                    'venue': fixture.get('venue', {}).get('name', ''),
-                    'referee': fixture.get('referee', 'Unknown')
                 }
                 
                 processed_matches.append(processed_match)
@@ -2642,6 +2811,18 @@ class ProfessionalFootballApp(MDApp):
                 filtered_matches = temp_filtered
                 print(f"🎯 بعد تطبيق فلتر NS Perfect 1_1: {len(filtered_matches)} مباراة")
             
+            # ⭐ فلتر NS Perfect 2_2 الجديد
+            if self.filter_ns_perfect_2_2_enabled:
+                print(f"🎯 تطبيق فلتر NS Perfect 2_2 على {len(filtered_matches)} مباراة")
+                temp_filtered = []
+                for match in filtered_matches:
+                    if match.get('status') in ['NS', 'TBD']:  
+                        filter_result = self.filter_ns_perfect_2_2(match)
+                        if "✅ yes" in filter_result:  
+                            temp_filtered.append(match)
+                filtered_matches = temp_filtered
+                print(f"🎯 بعد تطبيق فلتر NS Perfect 2_2: {len(filtered_matches)} مباراة")
+            
             # إزالة المفضلة والمخفية
             final_matches = self.filter_out_hidden_and_favorite_matches(filtered_matches)
             print(f"🚫 النتيجة النهائية: {len(final_matches)} مباراة مجدولة")
@@ -2651,6 +2832,8 @@ class ProfessionalFootballApp(MDApp):
                 filter_info = []
                 if self.filter_ns_perfect_1_1_enabled:
                     filter_info.append("NS Perfect 1_1 (API)")
+                if self.filter_ns_perfect_2_2_enabled:  # ⭐ إضافة الفلتر الجديد
+                    filter_info.append("NS Perfect 2_2 (API)")
                 
                 if filter_info:
                     filter_label = MDLabel(
@@ -2696,6 +2879,8 @@ class ProfessionalFootballApp(MDApp):
                 filter_texts = []
                 if self.filter_ns_perfect_1_1_enabled:
                     filter_texts.append("NS Perfect 1_1 (API)")
+                if self.filter_ns_perfect_2_2_enabled:  # ⭐ إضافة الفلتر الجديد
+                    filter_texts.append("NS Perfect 2_2 (API)")
                 if filter_texts:
                     no_matches_text += f" and filters: {' + '.join(filter_texts)}"
                 self.show_empty_message(no_matches_text)
@@ -2953,7 +3138,7 @@ class ProfessionalFootballApp(MDApp):
         
         # ⭐⭐ التعديل الجديد: إذا كانت البيانات من دورة بحث في دوريات أخرى
         if last_standings.get('from_different_league', False):
-            return f"↔{last_rank}", "different_league_blue"  # ⭐ إرجاع باللون الأزرق
+            return f"{last_rank}", "different_league_blue"  # ⭐ إرجاع باللون الأزرق
         
         if not current_standings:
             # الفريق موجود في الموسم الماضي فقط
@@ -2965,7 +3150,7 @@ class ProfessionalFootballApp(MDApp):
         
         # إذا الموسم الماضي عنده league_id و مختلف عن الدوري الحالي → عرض الرمز فقط
         if last_league_id is not None and last_league_id != current_league_id:
-            return f"↔{last_rank}", "moved_league"
+            return f"{last_rank}", "moved_league"
         
         # كل الحالات الأخرى نعرض الرتبة فقط
         return last_rank, "normal"
@@ -3839,6 +4024,32 @@ class ProfessionalFootballApp(MDApp):
         btn_ns_filter.add_widget(btn_ns_filter_icon)
         filter_buttons_box.add_widget(btn_ns_filter)
         
+        # ⭐ فلتر NS Perfect 2_2 الجديد
+        btn_ns_filter_2_2 = MDBoxLayout(
+            orientation='horizontal',
+            size_hint_y=None,
+            height=dp(40),
+            padding=dp(5),
+            spacing=dp(10)
+        )
+        btn_ns_filter_2_2_label = MDLabel(
+            text="📅 NS Filter (Perfect 2_2) for Calendar",
+            theme_text_color='Primary',
+            halign='left',
+            valign='center',
+            size_hint_x=0.8
+        )
+        btn_ns_filter_2_2_icon = MDIconButton(
+            icon= "checkbox-marked" if self.filter_ns_perfect_2_2_enabled else "checkbox-blank-outline",
+            theme_text_color='Custom',
+            text_color=get_color_from_hex("#4CAF50") if self.filter_ns_perfect_2_2_enabled else get_color_from_hex("#757575"),
+            on_release=lambda x: self.toggle_filter_ns_perfect_2_2(),  # ⭐ استدعاء الدالة الجديدة
+            size_hint_x=0.2
+        )
+        btn_ns_filter_2_2.add_widget(btn_ns_filter_2_2_label)
+        btn_ns_filter_2_2.add_widget(btn_ns_filter_2_2_icon)
+        filter_buttons_box.add_widget(btn_ns_filter_2_2)
+        
         # الفلترات الأخرى الحالية
         btn_condition1 = MDRaisedButton(
             text="🔍 Condition 1: One Team Scored/No Goals",
@@ -3960,6 +4171,7 @@ class ProfessionalFootballApp(MDApp):
         """إعادة تعيين جميع الفلترات"""
         self.reset_filter()
         self.filter_ns_perfect_1_1_enabled = False
+        self.filter_ns_perfect_2_2_enabled = False  # ⭐ إضافة الفلتر الجديد
         
         self.save_filter_state()
         
