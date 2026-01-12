@@ -331,7 +331,7 @@ class SQLiteStorage:
             return None
 
     def save_league_standings_to_cache(self, league_id, season, standings_data):
-        """حفظ ترتيب الدوري في الكاش الدائم"""
+        """حفظ ترتيب الدوري في الكاش الدائم للموسم الحالي"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -347,14 +347,14 @@ class SQLiteStorage:
             
             conn.commit()
             conn.close()
-            print(f"✅ تم حفظ ترتيب الدوري {league_id} للموسم {season} في الكاش الدائم")
+            print(f"✅ تم حفظ ترتيب الدوري {league_id} للموسم {season} في كاش الموسم الحالي")
             return True
         except Exception as e:
             print(f"❌ خطأ في حفظ كاش الترتيب: {e}")
             return False
 
     def load_league_standings_from_cache(self, league_id, season):
-        """تحميل ترتيب الدوري من الكاش الدائم"""
+        """تحميل ترتيب الدوري من الكاش الدائم للموسم الحالي"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -369,7 +369,7 @@ class SQLiteStorage:
             
             if row:
                 standings_data = json.loads(row[0])
-                print(f"✅ تم تحميل ترتيب الدوري {league_id} للموسم {season} من الكاش الدائم")
+                print(f"✅ تم تحميل ترتيب الدوري {league_id} للموسم {season} من كاش الموسم الحالي")
                 return standings_data
             
             return None
@@ -762,14 +762,14 @@ class StatsPopup(MDFloatLayout):
     away_team_name = StringProperty("")
     first_team_name_display = StringProperty("")
     second_team_name_display = StringProperty("")
-    first_team_goals_for = StringProperty("0")
-    first_team_goals_against = StringProperty("0")
-    second_team_goals_for = StringProperty("0")
-    second_team_goals_against = StringProperty("0")
+    first_team_goals_for = StringProperty("N/A")
+    first_team_goals_against = StringProperty("N/A")
+    second_team_goals_for = StringProperty("N/A")
+    second_team_goals_against = StringProperty("N/A")
     first_team_label = StringProperty("") 
     second_team_label = StringProperty("")
-    first_team_color = StringProperty("green")
-    second_team_color = StringProperty("green")
+    first_team_color = StringProperty("gray")
+    second_team_color = StringProperty("gray")
     
     first_team_current_rank = StringProperty("-")
     first_team_last_rank = StringProperty("-")
@@ -1783,22 +1783,23 @@ class ProfessionalFootballApp(MDApp):
             else:
                 print("⚠️ لا دوريات مختارة للكاش، سيتم تخطي الكاش")
 
-            # ⭐⭐ إضافة شرط هنا: إذا كان الفلتر active، لا تجلب من API
+            # ⭐⭐ إذا كان الفلتر active
             if self.filter_ns_perfect_1_1_enabled or self.filter_ns_perfect_2_2_enabled:
-                print("🚫 الفلتر active - الاكتفاء بالكاش فقط")
-                # إزالة التكرارات من الكاش
+                print("🚫 الفلتر active - استخدام الكاش فقط مع حذف المباريات المخفية أولًا")
+
+                # إزالة المباريات المخفية فورًا
+                non_hidden_matches = self.filter_out_hidden_matches_immediately(all_cached_matches)
+
+                # إزالة التكرارات بعد حذف المخفية
                 unique_matches = []
                 seen_ids = set()
-                for match in all_cached_matches:
+                for match in non_hidden_matches:
                     match_id = match.get('id')
                     if match_id and match_id not in seen_ids:
                         seen_ids.add(match_id)
                         unique_matches.append(match)
-                
-                # إزالة المباريات المخفية
-                unique_matches = self.filter_out_hidden_matches_immediately(unique_matches)
-                
-                print(f"📊 النتيجة من الكاش فقط: {len(unique_matches)} مباراة")
+
+                print(f"📊 النتيجة من الكاش بعد حذف المخفية: {len(unique_matches)} مباراة")
                 return unique_matches
 
             # 3️⃣ جلب كل المباريات من API بدون تحديد الدوري (فقط إذا لم يكن الفلتر active)
@@ -1910,23 +1911,34 @@ class ProfessionalFootballApp(MDApp):
         self.storage.save_filter_state('filter_ns_perfect_2_2_enabled', self.filter_ns_perfect_2_2_enabled)  # ⭐ خطوة جديدة
 
     def filter_ns_perfect_1_1(self, match_data):
+        """فلتر NS Perfect 1_1 المحسّن مع معالجة None"""
         try:
             match_id = match_data.get('id')
             home_team_id = match_data.get('home_team_id')
             away_team_id = match_data.get('away_team_id')
             league_id = match_data.get('league_id')
-            season = match_data.get('season', datetime.now().year)
+            season = match_data.get('season')  # ⭐ استخدام season من بيانات المباراة
+            
+            if not season:  # ⭐ التحقق من وجود season
+                season = datetime.now().year  # ⭐ قيمة افتراضية فقط إذا لم توجد
             
             # جلب البيانات من API
-            home_goals, home_count = self.fetch_team_last_goals_for_filter_from_api(
+            home_result = self.fetch_team_last_goals_for_filter_from_api(
                 home_team_id, league_id, season, is_home_team=True, matches_count=3
             )
-            away_goals, away_count = self.fetch_team_last_goals_for_filter_from_api(
+            away_result = self.fetch_team_last_goals_for_filter_from_api(
                 away_team_id, league_id, season, is_home_team=False, matches_count=3
             )
             
+            # ⭐ التعديل: التعامل مع None
+            if home_result[0] is None or away_result[0] is None:
+                return "✅ yes (Incomplete match data)"
+                
+            home_goals, home_count = home_result
+            away_goals, away_count = away_result
+            
             if home_count < 3 or away_count < 3:
-                return "✅ yes (Not enough matches)"
+                return "❌ no (Not enough matches)"
                 
             home_total_goals = home_goals
             away_total_goals = away_goals
@@ -1939,24 +1951,27 @@ class ProfessionalFootballApp(MDApp):
             home_rank_current_data = self.fetch_team_standings_with_cache(home_team_id, league_id, season)
             away_rank_current_data = self.fetch_team_standings_with_cache(away_team_id, league_id, season)
             
-            home_rank_current = str(home_rank_current_data.get('current_rank', 'N/A'))  # ✅ تحويل إلى نص
-            away_rank_current = str(away_rank_current_data.get('current_rank', 'N/A'))  # ✅ تحويل إلى نص
+            home_rank_current = str(home_rank_current_data.get('current_rank', 'N/A')) if home_rank_current_data else 'N/A'
+            away_rank_current = str(away_rank_current_data.get('current_rank', 'N/A')) if away_rank_current_data else 'N/A'
             
             status = match_data.get('status', 'NS')
             if status not in ['NS', 'TBD']:
                 return "❌ no (Match already started)"
             
-            home_goals = int(home_goals)
-            away_goals = int(away_goals)
+            try:
+                home_goals_int = int(home_goals)
+                away_goals_int = int(away_goals)
+            except (ValueError, TypeError):
+                return "❌ no (Invalid goals data)"
             
-            if home_goals == away_goals:
-                return f"✅ yes (Equal goals: {home_goals}-{away_goals})"
+            if home_goals_int == away_goals_int:
+                return f"✅ yes (Equal goals: {home_goals_int}-{away_goals_int})"
             
-            if home_goals > away_goals:
+            if home_goals_int > away_goals_int:
                 winner_label = "Home"
-                winner_goals = home_goals
+                winner_goals = home_goals_int
                 loser_label = "Away"
-                loser_goals = away_goals
+                loser_goals = away_goals_int
                 
                 try:
                     winner_rank_str = str(home_rank_current).strip()
@@ -2000,11 +2015,11 @@ class ProfessionalFootballApp(MDApp):
                 
                 return f"✅ yes (+:{winner_label} {winner_goals} | -:{loser_label} {loser_goals} | [+]{winner_rank_int} vs [-]{loser_rank_int} | Diff: +{goals_diff})"
             
-            if away_goals > home_goals:
+            if away_goals_int > home_goals_int:
                 winner_label = "Away"
-                winner_goals = away_goals
+                winner_goals = away_goals_int
                 loser_label = "Home"
-                loser_goals = home_goals
+                loser_goals = home_goals_int
                 
                 try:
                     winner_rank_str = str(away_rank_current).strip()
@@ -2182,11 +2197,14 @@ class ProfessionalFootballApp(MDApp):
                     'current_rank': {(1, 6), (1, 5), (1, 4), (1, 3), (2, 3), (2, 4), (2, 6), (2, 5), (3, 4), (3, 5), (3, 6), (4, 5), (4, 7), (4, 6), (1, 13), (1, 12), (1, 11), (1, 10), (1, 9), (1, 8), (1, 7), (2, 11), (2, 13), (2, 12), (2, 10), (2, 3), (2, 4), (2, 9), (2, 8), (2, 7), (2, 6), (2, 5), (3, 12), (3, 13), (3, 14), (3, 11), (3, 10), (3, 8), (3, 9), (4, 15), (4, 16), (4, 14), (4, 13), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8), (4, 7), (5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 6), (8, 6), (9, 6), (9, 7), (8, 7), (10, 6), (10, 7), (10, 8), (10, 9), (11, 6), (11, 7), (11, 8), (11, 9), (12, 8), (12, 9), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15)},
                     'last_season': {(90, 3), (90, 4), (90, 5), (90, 6), (90, 7), (90, 8), (90, 9)},
                 }
-            ]    
+            ]
             
             # استخراج البيانات الأساسية
             league_id = match_data.get('league_id')
-            season = match_data.get('season', datetime.now().year)
+            season = match_data.get('season')  # ⭐ استخدام season من بيانات المباراة
+            
+            if not season:  # ⭐ التحقق من وجود season
+                season = datetime.now().year  # ⭐ قيمة افتراضية فقط إذا لم توجد
             
             try:
                 season = int(season)
@@ -2197,12 +2215,17 @@ class ProfessionalFootballApp(MDApp):
             home_team_id = match_data.get('home_team_id')
             away_team_id = match_data.get('away_team_id')
             
+            print(f"🔍 فلتر NS Perfect 2_2: الدوري {league_id}, الموسم {season}, الموسم الماضي {last_season}")
 
             # جلب الترتيب الحالي
             home_current_data = self.fetch_team_standings_with_cache(home_team_id, league_id, season)
             away_current_data = self.fetch_team_standings_with_cache(away_team_id, league_id, season)
             
+            print(f"🏠 ترتيب الحالي للفريق المنزل: {home_current_data}")
+            print(f"✈️ ترتيب الحادي للفريق الضيف: {away_current_data}")
+            
             if not home_current_data or not away_current_data:
+                print("⚠️ البيانات الحالية غير مكتملة")
                 return "❌ no (Missing current season data)"
 
             home_current_rank = home_current_data.get('current_rank', 'N/A')
@@ -2212,16 +2235,34 @@ class ProfessionalFootballApp(MDApp):
             home_last_data = self._fetch_last_season_standings_with_cache(home_team_id, league_id, last_season)
             away_last_data = self._fetch_last_season_standings_with_cache(away_team_id, league_id, last_season)
             
+            print(f"🏠 ترتيب الماضي للفريق المنزل: {home_last_data}")
+            print(f"✈️ ترتيب الماضي للفريق الضيف: {away_last_data}")
+            
             home_last_rank = home_last_data.get('current_rank', 'N/A') if home_last_data else 'N/A'
             away_last_rank = away_last_data.get('current_rank', 'N/A') if away_last_data else 'N/A'
             
+            if home_last_rank in ("N/A", "NEW") or away_last_rank in ("N/A", "NEW"):
+                return "❌ no (N/A in last season standings)"
+                
             # تحويل الأرقام مع التحقق
             try:
-                ch = int(''.join(filter(str.isdigit, str(home_current_rank))) or 0)
-                ca = int(''.join(filter(str.isdigit, str(away_current_rank))) or 0)
-                lh = int(''.join(filter(str.isdigit, str(home_last_rank))) or 0)
-                la = int(''.join(filter(str.isdigit, str(away_last_rank))) or 0)
-            except ValueError:
+                # ⭐ معالجة خاصة للقيم النصية
+                def clean_rank(rank_str):
+                    if rank_str == 'N/A' or rank_str == 'NEW':
+                        return 0
+                    # استخراج الأرقام فقط
+                    digits = ''.join(filter(str.isdigit, str(rank_str)))
+                    return int(digits) if digits else 0
+                
+                ch = clean_rank(home_current_rank)
+                ca = clean_rank(away_current_rank)
+                lh = clean_rank(home_last_rank)
+                la = clean_rank(away_last_rank)
+                
+                print(f"📊 الرتب المحولة: الحالي ({ch}, {ca}), الماضي ({lh}, {la})")
+                
+            except ValueError as e:
+                print(f"❌ خطأ في تحويل الرتب: {e}")
                 return "❌ no (Invalid rank format)"
             
             # إنشاء الأزواج
@@ -2230,6 +2271,8 @@ class ProfessionalFootballApp(MDApp):
             current_pair_rev = (ca, ch)
             last_pair_rev = (la, lh)
             
+            print(f"🔗 الأزواج: الحالي {current_pair}, الماضي {last_pair}")
+            
             # التحقق من المجموعات المحظورة
             for group in forbidden_groups:
                 if (
@@ -2237,22 +2280,28 @@ class ProfessionalFootballApp(MDApp):
                     or
                     (current_pair_rev in group['current_rank'] and last_pair_rev in group['last_season'])
                 ):
+                    print(f"🚫 مجموعة محظورة: الحالي {current_pair}, الماضي {last_pair}")
                     return f"❌ no (Forbidden combination - Current: {current_pair}, Last: {last_pair})"
             
-            return "✅ yes (Current ranks: {current_pair}, Last season ranks: {last_pair})"
-            
+            result = f"✅ yes (Current ranks: {current_pair}, Last season ranks: {last_pair})"
+            print(result)
+            return result
+                
         except Exception as e:
-            print(f"ERROR in filter_ns_perfect_2_2: {e} for match {match_data.get('id')}")
+            print(f"❌ ERROR in filter_ns_perfect_2_2: {e} for match {match_data.get('id')}")
             return f"❌ no (Error: {str(e)[:50]})"
 
     def fetch_team_last_goals_for_filter_from_api(self, team_id, league_id, season, is_home_team, matches_count=3):
         """جلب الأهداف المسجلة في آخر مباريات من API"""
         try:
+            if not season:  # ⭐ التحقق من وجود season
+                season = datetime.now().year
+                
             url = f"{self.base_url}/fixtures"
             params = {
                 'team': team_id,
                 'league': league_id,
-                'season': season,
+                'season': season,  # ⭐ استخدام season الممرر
                 'last': 15  
             }
             
@@ -2263,7 +2312,7 @@ class ProfessionalFootballApp(MDApp):
                 matches = data.get('response', [])
                 
                 if not matches:
-                    return 0, 0
+                    return None, 0  # ⭐ تعديل: إرجاع None بدلاً من 0
                 
                 total_goals = 0
                 valid_matches = 0
@@ -2292,22 +2341,28 @@ class ProfessionalFootballApp(MDApp):
                             total_goals += goals_for
                             valid_matches += 1
                 
+                if valid_matches == 0:  # ⭐ تعديل: إذا لم توجد مباريات صالحة
+                    return None, 0
+                
                 return total_goals, valid_matches
                 
-            return 0, 0
+            return None, 0  # ⭐ تعديل: إرجاع None بدلاً من 0
             
         except Exception as e:
             print(f"Error in fetch_team_last_goals_for_filter_from_api for team {team_id}: {e}")
-            return 0, 0
+            return None, 0  # ⭐ تعديل: إرجاع None بدلاً من 0
 
     def fetch_team_last_goals_for_and_against_from_api(self, team_id, league_id, season, is_home_team, matches_count=3):
         """جلب الأهداف المسجلة والمستقبلة في آخر 3 مباريات من API"""
         try:
+            if not season:  # ⭐ التحقق من وجود season
+                season = datetime.now().year
+                
             url = f"{self.base_url}/fixtures"
             params = {
                 'team': team_id,
                 'league': league_id,
-                'season': season,
+                'season': season,  # ⭐ استخدام season الممرر
                 'last': 15
             }
             
@@ -2318,7 +2373,7 @@ class ProfessionalFootballApp(MDApp):
                 matches = data.get('response', [])
                 
                 if not matches:
-                    return 0, 0, 0
+                    return None, None, 0  # ⭐ تعديل: إرجاع None بدلاً من 0
                 
                 total_goals_for = 0
                 total_goals_against = 0
@@ -2351,33 +2406,39 @@ class ProfessionalFootballApp(MDApp):
                             total_goals_against += goals_against
                             valid_matches += 1
                 
+                if valid_matches == 0:  # ⭐ تعديل: إذا لم توجد مباريات صالحة
+                    return None, None, 0
+                
                 return total_goals_for, total_goals_against, valid_matches
                 
-            return 0, 0, 0
+            return None, None, 0  # ⭐ تعديل: إرجاع None بدلاً من 0
             
         except Exception as e:
             print(f"Error in fetch_team_last_goals_for_and_against_from_api for team {team_id}: {e}")
-            return 0, 0, 0
+            return None, None, 0  # ⭐ تعديل: إرجاع None بدلاً من 0
 
     # ⭐ دالة محسنة لجلب الترتيب مع الكاش الدائم - التعديل المهم هنا
     def fetch_team_standings_with_cache(self, team_id, league_id, season):
-        """جلب ترتيب الفريق مع استخدام الكاش الدائم"""
+        """جلب ترتيب الفريق للموسم الحالي مع استخدام الكاش الدائم"""
         try:
-            # 1. تحميل كل ترتيب الدوري من الكاش الدائم
+            if not season:  # ⭐ التحقق من وجود season
+                season = datetime.now().year
+            
+            # ⭐ التعديل المهم: البحث فقط في جدول الموسم الحالي
             all_standings = self.storage.load_league_standings_from_cache(league_id, season)
             
             if all_standings:
-                print(f"✅ استخدام الكاش الدائم لترتيب الدوري {league_id}")
+                print(f"✅ استخدام الكاش الدائم لترتيب الدوري {league_id} للموسم {season}")
                 # البحث عن الفريق المطلوب في بيانات الكاش
                 for team_data in all_standings:
                     if team_data.get('team_id') == team_id:
                         return team_data
             
             # إذا لم يكن في الكاش، جلب جديد من API
-            print(f"🌐 جلب ترتيب جديد من API للدوري {league_id}")
+            print(f"🌐 جلب ترتيب جديد من API للدوري {league_id} للموسم {season}")
             team_standings = self._fetch_team_standings_from_api(team_id, league_id, season)
             
-            # ⭐ الحل البسيط: إذا وجدنا بيانات الفريق، احفظ الدوري بالكامل في الكاش
+            # حفظ الدوري بالكامل في كاش الموسم الحالي
             if team_standings:
                 self._cache_all_league_standings(league_id, season)
             
@@ -2390,6 +2451,9 @@ class ProfessionalFootballApp(MDApp):
     def _fetch_team_standings_from_api(self, team_id, league_id, season):
         """جلب ترتيب فريق محدد من API"""
         try:
+            if not season:  # ⭐ التحقق من وجود season
+                season = datetime.now().year
+                
             url = f"{self.base_url}/standings"
             params = {
                 'league': league_id,
@@ -2420,9 +2484,12 @@ class ProfessionalFootballApp(MDApp):
             return None
 
     def _cache_all_league_standings(self, league_id, season):
-        """جلب وحفظ كل ترتيب الدوري في الكاش الدائم"""
+        """جلب وحفظ كل ترتيب الدوري في الكاش الدائم للموسم الحالي"""
         try:
-            print(f"🔄 جلب جميع فرق الدوري {league_id} للموسم {season} لحفظها في الكاش الدائم")
+            if not season:  # ⭐ التحقق من وجود season
+                season = datetime.now().year
+                
+            print(f"🔄 جلب جميع فرق الدوري {league_id} للموسم {season} لحفظها في الكاش الدائم (الموسم الحالي)")
             
             url = f"{self.base_url}/standings"
             params = {
@@ -2447,13 +2514,16 @@ class ProfessionalFootballApp(MDApp):
                             team_data = {
                                 'team_id': team_standing.get('team', {}).get('id'),
                                 'team_name': team_standing.get('team', {}).get('name'),
-                                'current_rank': str(team_standing.get('rank')),  # ✅ تحويل إلى نص
+                                'current_rank': str(team_standing.get('rank')),
+                                'season': season,
+                                'league_id': league_id,
+                                'league_name': league_data.get('name', '')
                             }
                             all_teams_data.append(team_data)
                     
-                    # حفظ في الكاش الدائم
+                    # ⭐ التعديل: حفظ في جدول الموسم الحالي فقط
                     self.storage.save_league_standings_to_cache(league_id, season, all_teams_data)
-                    print(f"✅ تم حفظ {len(all_teams_data)} فريق في كاش الدوري {league_id}")
+                    print(f"✅ تم حفظ {len(all_teams_data)} فريق في كاش الموسم الحالي للدوري {league_id}")
                     return True
             
             return False
@@ -2464,40 +2534,27 @@ class ProfessionalFootballApp(MDApp):
 
     # ⭐ دالة محسنة لجلب ترتيب الموسم الماضي (الدوري بالكامل) - التعديل المهم هنا
     def _fetch_last_season_standings_with_cache(self, team_id, league_id, season):
-        """جلب ترتيب الموسم الماضي من الكاش الدائم (الدوري بالكامل) مع البحث في الدوريات الأخرى"""
+        """جلب ترتيب الموسم الماضي من الكاش الدائم (الدوري بالكامل)"""
         try:
-            # 1. إذا كان الموسم الحالي، ابحث في جدول الموسم الحالي
-            if season == datetime.now().year:  # الموسم الحالي
-                cached_league_data = self.storage.load_league_standings_from_cache(league_id, season)
-            else:  # الموسم الماضي
-                # 2. ابحث أولاً في نفس الدوري للموسم الماضي
-                cached_league_data = self.storage.load_last_season_standings_from_cache(league_id, season)
-                
+            if not season:  # ⭐ التحقق من وجود season
+                season = datetime.now().year
+            
+            # ⭐ التعديل المهم هنا: البحث فقط في جدول الموسم الماضي
+            cached_league_data = self.storage.load_last_season_standings_from_cache(league_id, season)
+            
             if cached_league_data:
                 # البحث عن الفريق المطلوب في بيانات الدوري المخزنة
                 for team_data in cached_league_data:
                     if team_data.get('team_id') == team_id:
                         return team_data
             
-            # 3. إذا لم يتم العثور على الفريق في نفس الدوري، ابحث في جميع كاش الموسم الماضي حسب team_id
-            print(f"🔍 البحث عن الفريق {team_id} في دوريات أخرى للموسم {season}")
-            
-            # محاولة البحث في قاعدة بيانات كاش الموسم الماضي حسب team_id
-            last_season_data = self._find_team_in_last_season_cache_by_id(team_id, season)
-            if last_season_data:
-                print(f"✅ تم العثور على الفريق {team_id} في دوري آخر: {last_season_data.get('league_name')}")
-                return last_season_data
-            
-            # 4. إذا لم يكن الدوري في الكاش، جلب الدوري بالكامل من API
-            print(f"🌐 جلب جميع فرق الدوري {league_id} للموسم {season}")
+            # إذا لم يكن الدوري في الكاش، جلب الدوري بالكامل من API
+            print(f"🌐 جلب جميع فرق الدوري {league_id} للموسم {season} لحفظها في كاش الموسم الماضي")
             all_league_teams = self._fetch_all_league_teams_last_season(league_id, season)
             
             if all_league_teams:
-                # حفظ الدوري بالكامل في الكاش الدائم
-                if season == datetime.now().year:  # الموسم الحالي
-                    self.storage.save_league_standings_to_cache(league_id, season, all_league_teams)
-                else:  # الموسم الماضي
-                    self.storage.save_last_season_standings_to_cache(league_id, season, all_league_teams)
+                # حفظ الدوري بالكامل في الكاش الدائم للموسم الماضي
+                self.storage.save_last_season_standings_to_cache(league_id, season, all_league_teams)
                 
                 # البحث عن الفريق المطلوب
                 for team_data in all_league_teams:
@@ -2528,6 +2585,11 @@ class ProfessionalFootballApp(MDApp):
     def _fetch_all_league_teams_last_season(self, league_id, last_season):
         """جلب جميع فرق الدوري للموسم الماضي"""
         try:
+            if not last_season:  # ⭐ التحقق من وجود last_season
+                last_season = datetime.now().year - 1
+                
+            print(f"🔄 جلب جميع فرق الدوري {league_id} للموسم {last_season} لحفظها في كاش الموسم الماضي")
+            
             url = f"{self.base_url}/standings"
             params = {
                 'league': league_id,
@@ -2551,14 +2613,14 @@ class ProfessionalFootballApp(MDApp):
                                 team_data = {
                                     'team_id': team_standing.get('team', {}).get('id'),
                                     'team_name': team_standing.get('team', {}).get('name'),
-                                    'current_rank': str(team_standing.get('rank', 'N/A')),  # ✅ تحويل إلى نص
+                                    'current_rank': str(team_standing.get('rank', 'N/A')),
                                     'season': last_season,
                                     'league_id': league_id,
                                     'league_name': standings_data.get('league', {}).get('name', '')
                                 }
                                 all_teams_data.append(team_data)
                         
-                        print(f"✅ تم جلب {len(all_teams_data)} فريق من الدوري {league_id} للموسم {last_season}")
+                        print(f"✅ تم جلب {len(all_teams_data)} فريق من الدوري {league_id} للموسم الماضي {last_season}")
                         return all_teams_data
             
             return None
@@ -2658,7 +2720,7 @@ class ProfessionalFootballApp(MDApp):
                     'id': fixture.get('id'),
                     'league': league.get('name', 'Unknown League'),
                     'league_id': league.get('id'),
-                    'season': league.get('seasons', [{}])[0].get('year', datetime.now().year) if league.get('seasons') else datetime.now().year,
+                    'season': league.get('season'),
                     'home_team': home_team_name,
                     'home_team_id': home_team.get('id'),
                     'away_team': away_team_name,
@@ -2958,10 +3020,10 @@ class ProfessionalFootballApp(MDApp):
             popup.home_team_name = match_data.get('full_home_team', match_data.get('home_team', ''))
             popup.away_team_name = match_data.get('full_away_team', match_data.get('away_team', ''))
             
-            popup.first_team_goals_for = "0"
-            popup.first_team_goals_against = "0"
-            popup.second_team_goals_for = "0"
-            popup.second_team_goals_against = "0"
+            popup.first_team_goals_for = "N/A"
+            popup.first_team_goals_against = "N/A"
+            popup.second_team_goals_for = "N/A"
+            popup.second_team_goals_against = "N/A"
             
             from kivy.core.window import Window
             Window.add_widget(popup)
@@ -2983,7 +3045,10 @@ class ProfessionalFootballApp(MDApp):
             home_team_id = match_data.get('home_team_id')
             away_team_id = match_data.get('away_team_id')
             league_id = match_data.get('league_id')
-            season = match_data.get('season', datetime.now().year)
+            season = match_data.get('season')  # ⭐ استخدام season من بيانات المباراة
+            
+            if not season:  # ⭐ التحقق من وجود season
+                season = datetime.now().year
             
             if home_team_id and away_team_id and league_id:
                 def fetch_stats():
@@ -3018,7 +3083,7 @@ class ProfessionalFootballApp(MDApp):
                     except Exception as e:
                         print(f"❌ خطأ في جلب الإحصائيات: {e}")
                         Clock.schedule_once(lambda dt: self.update_popup_stats(
-                            popup, "green:0:0", "green:0:0",
+                            popup, None, None,
                             popup.home_team_name, popup.away_team_name,
                             None, None
                         ), 0)
@@ -3029,18 +3094,22 @@ class ProfessionalFootballApp(MDApp):
             print(f"❌ خطأ في تحميل الإحصائيات: {e}")
 
     def fetch_team_last_matches_improved(self, team_id, league_id, season, is_home_team):
+        """جلب آخر مباريات الفريق مع معالجة None"""
         try:
+            if not season:  # ⭐ التحقق من وجود season
+                season = datetime.now().year
+                
             url = f"{self.base_url}/fixtures"
             params = {
                 'team': team_id,
                 'league': league_id,
-                'season': season,
+                'season': season,  # ⭐ استخدام season الممرر
                 'last': 15
             }
             
             response = self.fetch_with_retry(url, params, max_retries=2)
             if not response:
-                return "green:0:0"
+                return None  # ⭐ تعديل: إرجاع None بدلاً من "green:0:0"
                 
             data = response.json()
             matches = data.get('response', [])
@@ -3067,38 +3136,105 @@ class ProfessionalFootballApp(MDApp):
                     finished_matches.append(match_data)
             
             if not finished_matches:
-                return "green:0:0"
+                return None  # ⭐ تعديل: إرجاع None بدلاً من "green:0:0"
                 
             finished_matches.sort(key=lambda x: x['date'], reverse=True)
             
             if is_home_team:
                 filtered_matches = [m for m in finished_matches if m['is_home']][:3]
+                if not filtered_matches:
+                    return None  # ⭐ تعديل: إرجاع None إذا لم توجد مباريات
                 stats = self.calculate_stats(filtered_matches, is_home=True)
             else:
                 filtered_matches = [m for m in finished_matches if not m['is_home']][:3]
+                if not filtered_matches:
+                    return None  # ⭐ تعديل: إرجاع None إذا لم توجد مباريات
                 stats = self.calculate_stats(filtered_matches, is_home=False)
             
             return stats
             
         except Exception as e:
             print(f"❌ Error in fetch_team_last_matches: {e}")
-            return "green:0:0"
+            return None  # ⭐ تعديل: إرجاع None بدلاً من "green:0:0"
+
+    def calculate_stats(self, matches, is_home):
+        """حساب الإحصائيات مع معالجة الحالات الفارغة"""
+        try:
+            if not matches:
+                return None  # ⭐ تعديل: إرجاع None بدلاً من "green:0:0"
+            
+            result = self.calcul(matches, is_home)
+            
+            if result and ":" in result:
+                parts = result.split(":")
+                if len(parts) == 3:
+                    return result
+            
+            return None  # ⭐ تعديل: إرجاع None بدلاً من "green:0:0"
+            
+        except Exception as e:
+            print(f"Error in calculate_stats: {e}")
+            return None  # ⭐ تعديل: إرجاع None بدلاً من "green:0:0"
+
+    def calcul(self, matches, is_home):
+        """حساب الأهداف مع معالجة الحالات الفارغة"""
+        try:
+            if not matches:
+                return None  # ⭐ تعديل: إرجاع None بدلاً من "green:0:0"
+            
+            total_goals_for = 0
+            total_goals_against = 0
+            zero_goal_matches = 0
+            
+            for match in matches:
+                if is_home:
+                    goals_for = match.get('home_goals', 0)
+                    goals_against = match.get('away_goals', 0)
+                else:
+                    goals_for = match.get('away_goals', 0)
+                    goals_against = match.get('home_goals', 0)
+                
+                total_goals_for += goals_for
+                total_goals_against += goals_against
+                
+                if goals_for == 0:
+                    zero_goal_matches += 1
+            
+            final_goals_for = min(total_goals_for, 9)
+            final_goals_against = min(total_goals_against, 9)
+
+            if final_goals_for >= 6:
+                if zero_goal_matches == 0:
+                    return "green:" + str(final_goals_for) + ":" + str(final_goals_against)
+                elif zero_goal_matches == 1:
+                    return "blue:" + str(final_goals_for) + ":" + str(final_goals_against)
+                elif zero_goal_matches >= 2:
+                    return "red:" + str(final_goals_for) + ":" + str(final_goals_against)
+            else:
+                return "green:" + str(final_goals_for) + ":" + str(final_goals_against)
+                
+        except Exception as e:
+            print(f"Error in calcul: {e}")
+            return None  # ⭐ تعديل: إرجاع None بدلاً من "green:0:0"
 
     # ⭐ دالة محسنة لجلب ترتيب الفريق مع الكاش الدائم للموسم الماضي (الدوري بالكامل)
     def fetch_team_standings_improved(self, team_id, league_id, season):
         try:
+            if not season:  # ⭐ التحقق من وجود season
+                season = datetime.now().year
+            
             # ⭐ التعديل البسيط والمهم هنا:
             # استخدم نفس الدالة للموسم الحالي والموسم الماضي
             
-            # 1. جلب الترتيب الحالي من الكاش
-            current_data = self._fetch_last_season_standings_with_cache(team_id, league_id, season)
+            # 1. جلب الترتيب الحالي من كاش الموسم الحالي
+            current_data = self.fetch_team_standings_with_cache(team_id, league_id, season)
             
             if current_data:
                 current_rank = str(current_data.get('current_rank', 'N/A'))  # ✅ تحويل إلى نص هنا
             else:
                 current_rank = 'N/A'
             
-            # 2. جلب الترتيب الموسم الماضي
+            # 2. جلب الترتيب الموسم الماضي من كاش الموسم الماضي
             last_season = season - 1
             last_season_data = self._fetch_last_season_standings_with_cache(team_id, league_id, last_season)
             
@@ -3114,6 +3250,8 @@ class ProfessionalFootballApp(MDApp):
                 'last_season': last_season
             }
             
+            print(f"📊 مصدر الترتيب الحالي: league_standings_cache للموسم {season}")
+            print(f"📊 مصدر الترتيب الماضي: last_season_standings_cache للموسم {last_season}")
             print(f"✅ جلب الترتيب: الحالي={current_rank}, الماضي={last_rank_display}")
             return combined_standings
                 
@@ -3133,7 +3271,12 @@ class ProfessionalFootballApp(MDApp):
         if not last_standings:
             return "N/A", "normal"
         
-        last_rank = str(last_standings.get('current_rank', 'N/A'))  # ✅ تحويل إلى نص
+        last_rank = str(last_standings.get('current_rank', 'N/A'))
+        
+        # ⭐ تحويل "N/A" إلى 0 لمقارنة الأرقام
+        if last_rank == "N/A":
+            return "NEW", "new_team"
+        
         last_league_id = last_standings.get('league_id', None)
         
         # ⭐⭐ التعديل الجديد: إذا كانت البيانات من دورة بحث في دوريات أخرى
@@ -3142,8 +3285,6 @@ class ProfessionalFootballApp(MDApp):
         
         if not current_standings:
             # الفريق موجود في الموسم الماضي فقط
-            if last_rank == "N/A":
-                return "NEW", "new_team"
             return last_rank, "normal"
         
         current_league_id = current_standings.get('league_id', None)
@@ -3406,61 +3547,6 @@ class ProfessionalFootballApp(MDApp):
         favorite_league_ids = {l.get('id') for l in self.favorite_leagues}
         return selected_league_ids | favorite_league_ids
 
-    def calcul(self, matches, is_home):
-        try:
-            if not matches:
-                return "green:0:0"
-            
-            total_goals_for = 0
-            total_goals_against = 0
-            zero_goal_matches = 0
-            
-            for match in matches:
-                if is_home:
-                    goals_for = match.get('home_goals', 0)
-                    goals_against = match.get('away_goals', 0)
-                else:
-                    goals_for = match.get('away_goals', 0)
-                    goals_against = match.get('home_goals', 0)
-                
-                total_goals_for += goals_for
-                total_goals_against += goals_against
-                
-                if goals_for == 0:
-                    zero_goal_matches += 1
-            
-            final_goals_for = min(total_goals_for, 9)
-            final_goals_against = min(total_goals_against, 9)
-
-            if final_goals_for >= 6:
-                if zero_goal_matches == 0:
-                    return "green:" + str(final_goals_for) + ":" + str(final_goals_against)
-                elif zero_goal_matches == 1:
-                    return "blue:" + str(final_goals_for) + ":" + str(final_goals_against)
-                elif zero_goal_matches >= 2:
-                    return "red:" + str(final_goals_for) + ":" + str(final_goals_against)
-            else:
-                return "green:" + str(final_goals_for) + ":" + str(final_goals_against)
-                
-        except Exception as e:
-            print(f"Error in calcul: {e}")
-            return "green:0:0"
-
-    def calculate_stats(self, matches, is_home):
-        try:
-            result = self.calcul(matches, is_home)
-            
-            if ":" in result:
-                parts = result.split(":")
-                if len(parts) == 3:
-                    return result
-            
-            return "green:0:0"
-            
-        except Exception as e:
-            print(f"Error in calculate_stats: {e}")
-            return "green:0:0"
-
     def determine_team_order(self, match_data):
         home_score = match_data.get('home_score')
         away_score = match_data.get('away_score')
@@ -3473,14 +3559,34 @@ class ProfessionalFootballApp(MDApp):
             home_team_id = match_data.get('home_team_id')
             away_team_id = match_data.get('away_team_id')
             league_id = match_data.get('league_id')
-            season = match_data.get('season', datetime.now().year)
+            season = match_data.get('season')  # ⭐ استخدام season من بيانات المباراة
             
+            if not season:  # ⭐ التحقق من وجود season
+                season = datetime.now().year
+                
             if home_team_id and away_team_id and league_id:
                 home_stats = self.fetch_team_last_matches_improved(home_team_id, league_id, season, is_home_team=True)
                 away_stats = self.fetch_team_last_matches_improved(away_team_id, league_id, season, is_home_team=False)
                 
-                home_goals_for = int(home_stats.split(':')[1]) if home_stats and ":" in home_stats else 0
-                away_goals_for = int(away_stats.split(':')[1]) if away_stats and ":" in away_stats else 0
+                # ⭐ التعديل: التعامل مع None
+                home_goals_for = 0
+                away_goals_for = 0
+                
+                if home_stats and ":" in home_stats:
+                    parts = home_stats.split(':')
+                    if len(parts) >= 2:
+                        try:
+                            home_goals_for = int(parts[1])
+                        except:
+                            pass
+                
+                if away_stats and ":" in away_stats:
+                    parts = away_stats.split(':')
+                    if len(parts) >= 2:
+                        try:
+                            away_goals_for = int(parts[1])
+                        except:
+                            pass
                 
                 if home_goals_for >= away_goals_for:
                     return 'home', 'away'
@@ -3496,33 +3602,47 @@ class ProfessionalFootballApp(MDApp):
 
     @mainthread
     def update_popup_stats(self, popup, first_stats, second_stats, first_name_display, second_name_display, first_standings=None, second_standings=None):
+        """تحديث إحصائيات البوب أب مع معالجة None"""
         try:
             popup.first_team_name_display = first_name_display
             popup.second_team_name_display = second_name_display
             
             def extract_goals_and_color(stats):
+                if stats is None:  # ⭐ تعديل: التحقق من None
+                    return None, "N/A", "N/A"  # ⭐ تعديل: إرجاع N/A بدلاً من 0
+                    
                 if stats and ":" in stats:
                     parts = stats.split(":")
                     if len(parts) == 3:
                         return parts[0], parts[1], parts[2]
-                return "green", "0", "0"
+                return None, "N/A", "N/A"  # ⭐ تعديل: إرجاع N/A بدلاً من 0
             
             first_color, first_for, first_against = extract_goals_and_color(first_stats)
-            popup.first_team_color = first_color
-            popup.first_team_goals_for = first_for
-            popup.first_team_goals_against = first_against
+            if first_color is None:
+                popup.first_team_color = "gray"  # ⭐ لون محايد للبيانات غير المتوفرة
+                popup.first_team_goals_for = "N/A"
+                popup.first_team_goals_against = "N/A"
+            else:
+                popup.first_team_color = first_color
+                popup.first_team_goals_for = first_for
+                popup.first_team_goals_against = first_against
             
             second_color, second_for, second_against = extract_goals_and_color(second_stats)
-            popup.second_team_color = second_color
-            popup.second_team_goals_for = second_for
-            popup.second_team_goals_against = second_against
+            if second_color is None:
+                popup.second_team_color = "gray"  # ⭐ لون محايد للبيانات غير المتوفرة
+                popup.second_team_goals_for = "N/A"
+                popup.second_team_goals_against = "N/A"
+            else:
+                popup.second_team_color = second_color
+                popup.second_team_goals_for = second_for
+                popup.second_team_goals_against = second_against
             
             if first_standings:
-                popup.first_team_current_rank = str(first_standings.get('current_rank', 'N/A'))  # ✅ تحويل إلى نص
-                popup.first_team_last_rank = str(first_standings.get('last_rank', 'N/A'))  # ✅ تحويل إلى نص
-                popup.first_team_points = str(first_standings.get('points', 'N/A'))  # ✅ تحويل إلى نص
-                popup.first_team_played = str(first_standings.get('played', 'N/A'))  # ✅ تحويل إلى نص
-                popup.first_last_rank_color = str(first_standings.get('last_rank_type', 'normal'))  # ✅ تعيين نوع اللون للفريق الأول
+                popup.first_team_current_rank = str(first_standings.get('current_rank', 'N/A'))
+                popup.first_team_last_rank = str(first_standings.get('last_rank', 'N/A'))
+                popup.first_team_points = str(first_standings.get('points', 'N/A'))
+                popup.first_team_played = str(first_standings.get('played', 'N/A'))
+                popup.first_last_rank_color = str(first_standings.get('last_rank_type', 'normal'))
             else:
                 popup.first_team_current_rank = 'N/A'
                 popup.first_team_last_rank = 'N/A'
@@ -3531,11 +3651,11 @@ class ProfessionalFootballApp(MDApp):
                 popup.first_last_rank_color = 'normal'
             
             if second_standings:
-                popup.second_team_current_rank = str(second_standings.get('current_rank', 'N/A'))  # ✅ تحويل إلى نص
-                popup.second_team_last_rank = str(second_standings.get('last_rank', 'N/A'))  # ✅ تحويل إلى نص
-                popup.second_team_points = str(second_standings.get('points', 'N/A'))  # ✅ تحويل إلى نص
-                popup.second_team_played = str(second_standings.get('played', 'N/A'))  # ✅ تحويل إلى نص
-                popup.second_last_rank_color = str(second_standings.get('last_rank_type', 'normal'))  # ✅ تعيين نوع اللون للفريق الثاني
+                popup.second_team_current_rank = str(second_standings.get('current_rank', 'N/A'))
+                popup.second_team_last_rank = str(second_standings.get('last_rank', 'N/A'))
+                popup.second_team_points = str(second_standings.get('points', 'N/A'))
+                popup.second_team_played = str(second_standings.get('played', 'N/A'))
+                popup.second_last_rank_color = str(second_standings.get('last_rank_type', 'normal'))
             else:
                 popup.second_team_current_rank = 'N/A'
                 popup.second_team_last_rank = 'N/A'
@@ -4404,21 +4524,20 @@ class ProfessionalFootballApp(MDApp):
             return "❌ no"
 
     def extract_goals_for_and_against(self, stats_str):
-
+        """استخراج الأهداف مع معالجة None"""
         try:
-
-            if not stats_str or stats_str.strip() == "":
-                return None, None  # ❌ لا توجد بيانات
+            if not stats_str or stats_str is None:
+                return None, None  # ⭐ تعديل: التعامل مع None مباشرة
 
             stats_str = stats_str.strip()
 
             parts = stats_str.split(":")
 
             if len(parts) != 3:
-                return None, None  # ❌ لا توجد 3 مباريات كاملة
+                return None, None  # ⭐ تعديل: إرجاع None بدلاً من التخطي
 
             if not (parts[0].isdigit() and parts[1].isdigit() and parts[2].isdigit()):
-                return None, None  # ❌ بيانات غير صالحة
+                return None, None  # ⭐ تعديل: إرجاع None بدلاً من التخطي
             
             # استخراج الأهداف
             goals_for = int(parts[1])      # Y في X:Y:Z (الأهداف المسجلة)
@@ -4428,15 +4547,19 @@ class ProfessionalFootballApp(MDApp):
             
         except Exception as e:
             print(f"Error extracting goals from '{stats_str}': {e}")
-            return None, None  # ❌ خطأ في المعالجة
-
+            return None, None  # ⭐ تعديل: إرجاع None بدلاً من التخطي
 
     def filter_condition_2(self, match_data):
+        """فلتر الشرط 2 مع معالجة None"""
         try:
             home_team_id = match_data.get('home_team_id')
             away_team_id = match_data.get('away_team_id')
             league_id = match_data.get('league_id')
-            season = match_data.get('season', datetime.now().year)
+            season = match_data.get('season')  # ⭐ استخدام season من بيانات المباراة
+            
+            if not season:  # ⭐ التحقق من وجود season
+                season = datetime.now().year
+                
             home_score = match_data.get('home_score', 0)
             away_score = match_data.get('away_score', 0)
             status = match_data.get('status', 'NS')
@@ -4497,11 +4620,12 @@ class ProfessionalFootballApp(MDApp):
             losing_goals_for, losing_goals_against = self.extract_goals_for_and_against(losing_stats_str)
             winning_goals_for, winning_goals_against = self.extract_goals_for_and_against(winning_stats_str)
             
-            if losing_goals_for is None:
-                return "❌ no"
+            # ⭐ التعديل: التعامل مع None
+            if losing_goals_for is None or losing_goals_against is None:
+                return "❌ no (لا توجد بيانات كافية للفريق الخاسر)"
             
-            if winning_goals_for is None:
-                return "❌ no"
+            if winning_goals_for is None or winning_goals_against is None:
+                return "❌ no (لا توجد بيانات كافية للفريق الفائز)"
             
             if losing_goals_against > 7:
                 return "❌ no"
