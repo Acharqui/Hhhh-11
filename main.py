@@ -7,7 +7,7 @@ from kivy.metrics import dp
 from kivy.animation import Animation
 from kivy.uix.relativelayout import RelativeLayout
 from datetime import datetime, timedelta
-import threading
+import concurrent.futures
 import requests
 import json
 import os
@@ -1716,6 +1716,10 @@ class ProfessionalFootballApp(MDApp):
         self.team_stats_cache = {}
         self.team_standings_cache = {}
         self.cache_timeout = 300
+        
+        # ⭐ إضافة ThreadPoolExecutor للتحكم في الخيوط
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+        self.futures = []  # لتتبع المهام الجارية
     
     def build(self):
         self.theme_cls.primary_palette = 'Blue'
@@ -1743,6 +1747,10 @@ class ProfessionalFootballApp(MDApp):
         super().on_start()
     
     def on_stop(self):
+        # ⭐ إغلاق ThreadPoolExecutor عند إغلاق التطبيق
+        if hasattr(self, 'executor'):
+            self.executor.shutdown(wait=False)
+            
         if self._update_event:
             self._update_event.cancel()
             
@@ -2687,17 +2695,19 @@ class ProfessionalFootballApp(MDApp):
     def show_calendar_matches(self, target_date):
         self.show_loading(f"Loading scheduled matches for {target_date.strftime('%d/%m/%Y')}...")
         
-        def fetch_and_display():
-            try:
-                matches = self.fetch_matches_by_date_improved(target_date)
-                processed_matches = self.process_matches_improved(matches)
-                
-                Clock.schedule_once(lambda dt: self.display_calendar_matches_improved(processed_matches, target_date), 0)
-            except Exception as e:
-                print(f"❌ خطأ في جلب المباريات: {e}")
-                Clock.schedule_once(lambda dt: self.display_calendar_matches_improved([], target_date), 0)
-                
-        threading.Thread(target=fetch_and_display, daemon=True).start()
+        # ⭐ استخدام ThreadPoolExecutor بدلاً من threading.Thread
+        future = self.executor.submit(self._fetch_and_display_calendar_matches, target_date)
+        self.futures.append(future)
+        
+    def _fetch_and_display_calendar_matches(self, target_date):
+        try:
+            matches = self.fetch_matches_by_date_improved(target_date)
+            processed_matches = self.process_matches_improved(matches)
+            
+            Clock.schedule_once(lambda dt: self.display_calendar_matches_improved(processed_matches, target_date), 0)
+        except Exception as e:
+            print(f"❌ خطأ في جلب المباريات: {e}")
+            Clock.schedule_once(lambda dt: self.display_calendar_matches_improved([], target_date), 0)
 
     def process_api_response_improved(self, api_matches):
         processed_matches = []
@@ -3051,47 +3061,53 @@ class ProfessionalFootballApp(MDApp):
                 season = datetime.now().year
             
             if home_team_id and away_team_id and league_id:
-                def fetch_stats():
-                    try:
-                        first_team_role, second_team_role = self.determine_team_order(match_data)
-                        
-                        if first_team_role == 'home':
-                            # ✅ الأهداف: API مباشرة (لا يوجد كاش)
-                            first_stats = self.fetch_team_last_matches_improved(home_team_id, league_id, season, is_home_team=True)
-                            second_stats = self.fetch_team_last_matches_improved(away_team_id, league_id, season, is_home_team=False)
-                            first_name_display = popup.home_team_name 
-                            second_name_display = popup.away_team_name
-                            
-                            # ⭐ الترتيب: التعديل المهم هنا - استخدام الدالة المحسنة
-                            first_standings = self.fetch_team_standings_improved(home_team_id, league_id, season)
-                            second_standings = self.fetch_team_standings_improved(away_team_id, league_id, season)
-                        else:
-                            first_stats = self.fetch_team_last_matches_improved(away_team_id, league_id, season, is_home_team=False)
-                            second_stats = self.fetch_team_last_matches_improved(home_team_id, league_id, season, is_home_team=True)
-                            first_name_display = popup.away_team_name
-                            second_name_display = popup.home_team_name
-                            
-                            first_standings = self.fetch_team_standings_improved(away_team_id, league_id, season)
-                            second_standings = self.fetch_team_standings_improved(home_team_id, league_id, season)
-                        
-                        Clock.schedule_once(lambda dt: self.update_popup_stats(
-                            popup, first_stats, second_stats, 
-                            first_name_display, second_name_display,
-                            first_standings, second_standings
-                        ), 0)
-                        
-                    except Exception as e:
-                        print(f"❌ خطأ في جلب الإحصائيات: {e}")
-                        Clock.schedule_once(lambda dt: self.update_popup_stats(
-                            popup, None, None,
-                            popup.home_team_name, popup.away_team_name,
-                            None, None
-                        ), 0)
-                        
-                threading.Thread(target=fetch_stats, daemon=True).start()
+                # ⭐ استخدام ThreadPoolExecutor بدلاً من threading.Thread
+                future = self.executor.submit(
+                    self._fetch_popup_stats_thread, 
+                    match_data, popup, home_team_id, away_team_id, league_id, season
+                )
+                self.futures.append(future)
                 
         except Exception as e:
             print(f"❌ خطأ في تحميل الإحصائيات: {e}")
+
+    def _fetch_popup_stats_thread(self, match_data, popup, home_team_id, away_team_id, league_id, season):
+        """دالة مساعدة لجلب إحصائيات البوب أب في ThreadPoolExecutor"""
+        try:
+            first_team_role, second_team_role = self.determine_team_order(match_data)
+            
+            if first_team_role == 'home':
+                # ✅ الأهداف: API مباشرة (لا يوجد كاش)
+                first_stats = self.fetch_team_last_matches_improved(home_team_id, league_id, season, is_home_team=True)
+                second_stats = self.fetch_team_last_matches_improved(away_team_id, league_id, season, is_home_team=False)
+                first_name_display = popup.home_team_name 
+                second_name_display = popup.away_team_name
+                
+                # ⭐ الترتيب: التعديل المهم هنا - استخدام الدالة المحسنة
+                first_standings = self.fetch_team_standings_improved(home_team_id, league_id, season)
+                second_standings = self.fetch_team_standings_improved(away_team_id, league_id, season)
+            else:
+                first_stats = self.fetch_team_last_matches_improved(away_team_id, league_id, season, is_home_team=False)
+                second_stats = self.fetch_team_last_matches_improved(home_team_id, league_id, season, is_home_team=True)
+                first_name_display = popup.away_team_name
+                second_name_display = popup.home_team_name
+                
+                first_standings = self.fetch_team_standings_improved(away_team_id, league_id, season)
+                second_standings = self.fetch_team_standings_improved(home_team_id, league_id, season)
+            
+            Clock.schedule_once(lambda dt: self.update_popup_stats(
+                popup, first_stats, second_stats, 
+                first_name_display, second_name_display,
+                first_standings, second_standings
+            ), 0)
+            
+        except Exception as e:
+            print(f"❌ خطأ في جلب الإحصائيات: {e}")
+            Clock.schedule_once(lambda dt: self.update_popup_stats(
+                popup, None, None,
+                popup.home_team_name, popup.away_team_name,
+                None, None
+            ), 0)
 
     def fetch_team_last_matches_improved(self, team_id, league_id, season, is_home_team):
         """جلب آخر مباريات الفريق مع معالجة None"""
@@ -4340,8 +4356,9 @@ class ProfessionalFootballApp(MDApp):
             self.show_snackbar("No hidden matches to clear")
 
     def fetch_leagues_threaded(self, keyword=""):
-        t = threading.Thread(target=self.fetch_leagues_api, args=(keyword,))
-        t.start()
+        # ⭐ استخدام ThreadPoolExecutor بدلاً من threading.Thread
+        future = self.executor.submit(self.fetch_leagues_api, keyword)
+        self.futures.append(future)
 
     def fetch_leagues_api(self, keyword=""):
         url = "https://v3.football.api-sports.io/leagues"
@@ -4495,7 +4512,9 @@ class ProfessionalFootballApp(MDApp):
         self.load_leagues_and_matches()
 
     def refresh_data(self):
-        threading.Thread(target=self._fetch_and_update_live_data, daemon=True).start()
+        # ⭐ استخدام ThreadPoolExecutor بدلاً من threading.Thread
+        future = self.executor.submit(self._fetch_and_update_live_data)
+        self.futures.append(future)
 
     def default_filter_condition(self, match_data):
         return "❌ no"
@@ -4703,48 +4722,51 @@ class ProfessionalFootballApp(MDApp):
             
         self._is_filtering = True
         
-        def apply_filter():
-            try:
-                filtered_matches = []
-                filter_results = {}
-                
-                live_matches = self.fetch_live_matches_sync()
-                
-                relevant_matches = [
-                    match for match in live_matches 
-                    if match.get('status') in ['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE']
-                ]
-                
-                required_league_ids = self.get_required_league_ids()
-                if required_league_ids:
-                    relevant_matches = [
-                        match for match in relevant_matches
-                        if match.get('league_id') in required_league_ids
-                    ]
-
-                hidden_ids = {m.get('id') for m in self.hidden_matches}
-                relevant_matches = [
-                    match for match in relevant_matches 
-                    if match.get('id') not in hidden_ids
-                ]
-                
-                for match in relevant_matches:
-                    match_id = match.get('id')
-                    result = self.apply_filter_condition(match)
-                    filter_results[match_id] = result
-                    
-                    if result == "✅ yes":
-                        filtered_matches.append(match)
-                
-                Clock.schedule_once(lambda dt: self._update_ui_with_filtered_matches(
-                    filtered_matches, filter_results
-                ), 0)
-                
-            except Exception as e:
-                print(f"Filter error: {e}")
-                Clock.schedule_once(lambda dt: self._handle_filter_error(e), 0)
+        # ⭐ استخدام ThreadPoolExecutor بدلاً من threading.Thread
+        future = self.executor.submit(self._apply_filter_process)
+        self.futures.append(future)
         
-        threading.Thread(target=apply_filter, daemon=True).start()
+    def _apply_filter_process(self):
+        """دالة مساعدة لتطبيق الفلتر في ThreadPoolExecutor"""
+        try:
+            filtered_matches = []
+            filter_results = {}
+            
+            live_matches = self.fetch_live_matches_sync()
+            
+            relevant_matches = [
+                match for match in live_matches 
+                if match.get('status') in ['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE']
+            ]
+            
+            required_league_ids = self.get_required_league_ids()
+            if required_league_ids:
+                relevant_matches = [
+                    match for match in relevant_matches
+                    if match.get('league_id') in required_league_ids
+                ]
+
+            hidden_ids = {m.get('id') for m in self.hidden_matches}
+            relevant_matches = [
+                match for match in relevant_matches 
+                if match.get('id') not in hidden_ids
+            ]
+            
+            for match in relevant_matches:
+                match_id = match.get('id')
+                result = self.apply_filter_condition(match)
+                filter_results[match_id] = result
+                
+                if result == "✅ yes":
+                    filtered_matches.append(match)
+            
+            Clock.schedule_once(lambda dt: self._update_ui_with_filtered_matches(
+                filtered_matches, filter_results
+            ), 0)
+            
+        except Exception as e:
+            print(f"Filter error: {e}")
+            Clock.schedule_once(lambda dt: self._handle_filter_error(e), 0)
 
     def apply_filter_condition(self, match_data):
         return self.filter_condition(match_data)
@@ -4848,8 +4870,9 @@ class ProfessionalFootballApp(MDApp):
     def load_leagues_and_matches(self):
         self.show_loading("🚀 Starting Football App", 0, "Initializing...")
         
-        self.loading_thread = threading.Thread(target=self._load_with_progress, daemon=True)
-        self.loading_thread.start()
+        # ⭐ استخدام ThreadPoolExecutor بدلاً من threading.Thread
+        future = self.executor.submit(self._load_with_progress)
+        self.futures.append(future)
 
     def _load_with_progress(self):
         total_steps = 5
@@ -4915,7 +4938,9 @@ class ProfessionalFootballApp(MDApp):
         if self.current_filter != "No Filter":
             self.run_filter_process_threaded()
         else:
-            threading.Thread(target=self._quick_refresh, daemon=True).start()
+            # ⭐ استخدام ThreadPoolExecutor بدلاً من threading.Thread
+            future = self.executor.submit(self._quick_refresh)
+            self.futures.append(future)
 
     def _animate_refresh_button(self):
         try:
