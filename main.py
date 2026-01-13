@@ -712,6 +712,55 @@ class SQLiteStorage:
             print(f"❌ خطأ في مسح الكاش: {e}")
             return False, []
 
+    def delete_match_from_scheduled_cache(self, match_id, league_id, match_date):
+        """حذف مباراة محددة من scheduled_matches_cache"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # جلب البيانات الحالية من الكاش
+            cursor.execute('''
+                SELECT match_data FROM scheduled_matches_cache
+                WHERE match_date = ? AND league_id = ?
+            ''', (match_date, league_id))
+            
+            row = cursor.fetchone()
+            if row:
+                match_data = json.loads(row[0])
+                
+                # فلترة المباراة المراد حذفها
+                filtered_matches = [
+                    match for match in match_data 
+                    if match.get('id') != match_id
+                ]
+                
+                if len(filtered_matches) == 0:
+                    # إذا لم تعد هناك مباريات، احذف السجل بالكامل
+                    cursor.execute('''
+                        DELETE FROM scheduled_matches_cache
+                        WHERE match_date = ? AND league_id = ?
+                    ''', (match_date, league_id))
+                else:
+                    # تحديث البيانات بعد الحذف
+                    json_data = json.dumps(filtered_matches)
+                    cursor.execute('''
+                        UPDATE scheduled_matches_cache
+                        SET match_data = ?
+                        WHERE match_date = ? AND league_id = ?
+                    ''', (json_data, match_date, league_id))
+                
+                conn.commit()
+                conn.close()
+                print(f"✅ تم حذف المباراة {match_id} من كاش المباريات المجدولة")
+                return True
+            else:
+                conn.close()
+                return False
+                
+        except Exception as e:
+            print(f"❌ خطأ في حذف المباراة من الكاش: {e}")
+            return False
+
 
 class CalendarHeader(MDBoxLayout):
     selected_date = StringProperty("")
@@ -1047,6 +1096,31 @@ class OptimizedCompactMatchItem(MDCard):
             app.add_hidden_match(self.match_data)
             app.show_snackbar(f"✅ Match hidden: {self.home_team} vs {self.away_team}")
             
+            # ⭐⭐ إضافة: حذف المباراة من scheduled_matches_cache
+            try:
+                # استخراج معلومات المباراة اللازمة
+                league_id = self.match_data.get('league_id')
+                time_str = self.match_data.get('time', '')
+                
+                if league_id and time_str:
+                    # تحويل تاريخ المباراة
+                    dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                    match_date = dt.strftime('%Y-%m-%d')
+                    
+                    # حذف المباراة من الكاش
+                    success = app.storage.delete_match_from_scheduled_cache(
+                        match_id=match_id,
+                        league_id=league_id,
+                        match_date=match_date
+                    )
+                    
+                    if success:
+                        print(f"✅ تم حذف المباراة من scheduled_matches_cache")
+                    else:
+                        print(f"⚠️ لم يتم العثور على المباراة في الكاش")
+            except Exception as e:
+                print(f"⚠️ خطأ في حذف المباراة من الكاش: {e}")
+            
             app.remove_match_from_all_lists(match_id)
             
             parent = self.parent
@@ -1281,7 +1355,7 @@ KV = '''
                         bold: True
                         
                     MDLabel:
-                        text: "(" + root.first_team_last_rank + ")"
+                        text: "" + root.first_team_last_rank + ""
                         theme_text_color: 'Custom'
                         text_color: get_color_from_hex("#2196F3") if root.first_last_rank_color == "different_league_blue" else (get_color_from_hex("#00FF00") if root.first_last_rank_color == "normal" else (get_color_from_hex("#00FF00") if root.first_last_rank_color == "new_team" else get_color_from_hex("#FF0000")))
                         font_size: "15sp"
@@ -1324,7 +1398,7 @@ KV = '''
                             bold: True
                             
                         MDLabel:
-                            text: "(" + root.second_team_last_rank + ")"
+                            text: "" + root.second_team_last_rank + ""
                             theme_text_color: 'Custom'
                             text_color: get_color_from_hex("#2196F3") if root.second_last_rank_color == "different_league_blue" else (get_color_from_hex("#00FF00") if root.second_last_rank_color == "normal" else (get_color_from_hex("#00FF00") if root.second_last_rank_color == "new_team" else get_color_from_hex("#FF0000")))
                             font_size: "15sp"
@@ -1674,8 +1748,8 @@ class ProfessionalFootballApp(MDApp):
     current_calendar_date = None
     calendar_mode = BooleanProperty(False)
     
-    filter_ns_perfect_1_1_enabled = BooleanProperty(False)
-    filter_ns_perfect_2_2_enabled = BooleanProperty(False)  # ⭐ الخاصية الجديدة
+    filter_ns_perfect_2_2_enabled = BooleanProperty(False)
+    filter_ns_perfect_1_1_enabled = BooleanProperty(False)  # ⭐ الخاصية الجديدة
     
     # ⭐ الخصائص الجديدة للدفعات
     leagues_per_batch = NumericProperty(10)  # عدد الدوريات في كل دفعة
@@ -1792,7 +1866,7 @@ class ProfessionalFootballApp(MDApp):
                 print("⚠️ لا دوريات مختارة للكاش، سيتم تخطي الكاش")
 
             # ⭐⭐ إذا كان الفلتر active
-            if self.filter_ns_perfect_1_1_enabled or self.filter_ns_perfect_2_2_enabled:
+            if self.filter_ns_perfect_2_2_enabled or self.filter_ns_perfect_1_1_enabled:
                 print("🚫 الفلتر active - استخدام الكاش فقط مع حذف المباريات المخفية أولًا")
 
                 # إزالة المباريات المخفية فورًا
@@ -1911,15 +1985,15 @@ class ProfessionalFootballApp(MDApp):
         return filtered
 
     def load_filter_state(self):
-        self.filter_ns_perfect_1_1_enabled = self.storage.load_filter_state('filter_ns_perfect_1_1_enabled')
-        self.filter_ns_perfect_2_2_enabled = self.storage.load_filter_state('filter_ns_perfect_2_2_enabled')  # ⭐ خطوة جديدة
+        self.filter_ns_perfect_2_2_enabled = self.storage.load_filter_state('filter_ns_perfect_2_2_enabled')
+        self.filter_ns_perfect_1_1_enabled = self.storage.load_filter_state('filter_ns_perfect_1_1_enabled')  # ⭐ خطوة جديدة
             
     def save_filter_state(self):
-        self.storage.save_filter_state('filter_ns_perfect_1_1_enabled', self.filter_ns_perfect_1_1_enabled)
-        self.storage.save_filter_state('filter_ns_perfect_2_2_enabled', self.filter_ns_perfect_2_2_enabled)  # ⭐ خطوة جديدة
+        self.storage.save_filter_state('filter_ns_perfect_2_2_enabled', self.filter_ns_perfect_2_2_enabled)
+        self.storage.save_filter_state('filter_ns_perfect_1_1_enabled', self.filter_ns_perfect_1_1_enabled)  # ⭐ خطوة جديدة
 
-    def filter_ns_perfect_1_1(self, match_data):
-        """فلتر NS Perfect 1_1 المحسّن مع معالجة None"""
+    def filter_ns_perfect_2_2(self, match_data):
+        """فلتر NS Perfect 2_2 المحسّن مع معالجة None"""
         try:
             match_id = match_data.get('id')
             home_team_id = match_data.get('home_team_id')
@@ -2072,11 +2146,11 @@ class ProfessionalFootballApp(MDApp):
                 return f"✅ yes (+:{winner_label} {winner_goals} | -:{loser_label} {loser_goals} | [+]{winner_rank_int} vs [-]{loser_rank_int} | Diff: +{goals_diff})"
                 
         except Exception as e:
-            print(f"NS Perfect 1_1 Filter Error: {e}")
+            print(f"NS Perfect 2_2 Filter Error: {e}")
             return "❌ no (System Error)"
 
-    def filter_ns_perfect_2_2(self, match_data):
-        """فلتر NS Perfect 2_2 المحسّن مع التحقق من المجموعات المحظورة"""
+    def filter_ns_perfect_1_1(self, match_data):
+        """فلتر NS Perfect 1_1 المحسّن مع التحقق من المجموعات المحظورة"""
         try:
             # تعريف المجموعات المحظورة
             forbidden_groups = [
@@ -2223,7 +2297,7 @@ class ProfessionalFootballApp(MDApp):
             home_team_id = match_data.get('home_team_id')
             away_team_id = match_data.get('away_team_id')
             
-            print(f"🔍 فلتر NS Perfect 2_2: الدوري {league_id}, الموسم {season}, الموسم الماضي {last_season}")
+            print(f"🔍 فلتر NS Perfect 1_1: الدوري {league_id}, الموسم {season}, الموسم الماضي {last_season}")
 
             # جلب الترتيب الحالي
             home_current_data = self.fetch_team_standings_with_cache(home_team_id, league_id, season)
@@ -2296,7 +2370,7 @@ class ProfessionalFootballApp(MDApp):
             return result
                 
         except Exception as e:
-            print(f"❌ ERROR in filter_ns_perfect_2_2: {e} for match {match_data.get('id')}")
+            print(f"❌ ERROR in filter_ns_perfect_1_1: {e} for match {match_data.get('id')}")
             return f"❌ no (Error: {str(e)[:50]})"
 
     def fetch_team_last_goals_for_filter_from_api(self, team_id, league_id, season, is_home_team, matches_count=3):
@@ -2661,18 +2735,18 @@ class ProfessionalFootballApp(MDApp):
     def save_favorite_leagues(self):
         self.storage.save_favorite_leagues(self.favorite_leagues)
 
-    def toggle_filter_ns_perfect_1_1(self):
-        self.filter_ns_perfect_1_1_enabled = not self.filter_ns_perfect_1_1_enabled
-        self.save_filter_state()
-        status = "Enabled" if self.filter_ns_perfect_1_1_enabled else "Disabled"
-        self.show_snackbar(f"NS Filter (Perfect 1_1) is now {status}")
-        self.show_profile()  
-
     def toggle_filter_ns_perfect_2_2(self):
         self.filter_ns_perfect_2_2_enabled = not self.filter_ns_perfect_2_2_enabled
         self.save_filter_state()
         status = "Enabled" if self.filter_ns_perfect_2_2_enabled else "Disabled"
         self.show_snackbar(f"NS Filter (Perfect 2_2) is now {status}")
+        self.show_profile()  
+
+    def toggle_filter_ns_perfect_1_1(self):
+        self.filter_ns_perfect_1_1_enabled = not self.filter_ns_perfect_1_1_enabled
+        self.save_filter_state()
+        status = "Enabled" if self.filter_ns_perfect_1_1_enabled else "Disabled"
+        self.show_snackbar(f"NS Filter (Perfect 1_1) is now {status}")
         self.show_profile()  # لتحديث العرض
 
     def on_calendar_date_selected(self, selected_date):
@@ -2716,6 +2790,7 @@ class ProfessionalFootballApp(MDApp):
             try:
                 fixture = match.get('fixture', {})
                 teams = match.get('teams', {})
+                goals = match.get('goals', {})
                 league = match.get('league', {})
                 
                 home_team = teams.get('home', {})
@@ -2723,21 +2798,34 @@ class ProfessionalFootballApp(MDApp):
                 
                 home_team_name = home_team.get('name', 'Home Team')
                 away_team_name = away_team.get('name', 'Away Team')
-                                
+                
+                full_home_team_name = home_team.get('name', 'Home Team')
+                full_away_team_name = away_team.get('name', 'Away Team')
+                
+                home_score = goals.get('home')
+                away_score = goals.get('away')
+                
                 status = fixture.get('status', {}).get('short', 'NS')
+                elapsed = fixture.get('status', {}).get('elapsed')
                 
                 processed_match = {
                     'id': fixture.get('id'),
                     'league': league.get('name', 'Unknown League'),
                     'league_id': league.get('id'),
                     'season': league.get('season'),
+                    
                     'home_team': home_team_name,
+
                     'home_team_id': home_team.get('id'),
                     'away_team': away_team_name,
-                    'away_team_id': away_team.get('id'),
 
+                    'away_team_id': away_team.get('id'),
+                    'home_score': home_score,
+                    'away_score': away_score,
                     'status': status,
+                    'elapsed': elapsed,
                     'time': fixture.get('date', ''),
+
                 }
                 
                 processed_matches.append(processed_match)
@@ -2871,19 +2959,7 @@ class ProfessionalFootballApp(MDApp):
             # تطبيق الفلترات بالتسلسل
             final_matches_filtered = []
             
-            # فلتر NS Perfect 1_1 (تستخدم API فقط)
-            if self.filter_ns_perfect_1_1_enabled:
-                print(f"🎯 تطبيق فلتر NS Perfect 1_1 على {len(filtered_matches)} مباراة")
-                temp_filtered = []
-                for match in filtered_matches:
-                    if match.get('status') in ['NS', 'TBD']:  
-                        filter_result = self.filter_ns_perfect_1_1(match)
-                        if "✅ yes" in filter_result:  
-                            temp_filtered.append(match)
-                filtered_matches = temp_filtered
-                print(f"🎯 بعد تطبيق فلتر NS Perfect 1_1: {len(filtered_matches)} مباراة")
-            
-            # ⭐ فلتر NS Perfect 2_2 الجديد
+            # فلتر NS Perfect 2_2 (تستخدم API فقط)
             if self.filter_ns_perfect_2_2_enabled:
                 print(f"🎯 تطبيق فلتر NS Perfect 2_2 على {len(filtered_matches)} مباراة")
                 temp_filtered = []
@@ -2895,6 +2971,18 @@ class ProfessionalFootballApp(MDApp):
                 filtered_matches = temp_filtered
                 print(f"🎯 بعد تطبيق فلتر NS Perfect 2_2: {len(filtered_matches)} مباراة")
             
+            # ⭐ فلتر NS Perfect 1_1 الجديد
+            if self.filter_ns_perfect_1_1_enabled:
+                print(f"🎯 تطبيق فلتر NS Perfect 1_1 على {len(filtered_matches)} مباراة")
+                temp_filtered = []
+                for match in filtered_matches:
+                    if match.get('status') in ['NS', 'TBD']:  
+                        filter_result = self.filter_ns_perfect_1_1(match)
+                        if "✅ yes" in filter_result:  
+                            temp_filtered.append(match)
+                filtered_matches = temp_filtered
+                print(f"🎯 بعد تطبيق فلتر NS Perfect 1_1: {len(filtered_matches)} مباراة")
+            
             # إزالة المفضلة والمخفية
             final_matches = self.filter_out_hidden_and_favorite_matches(filtered_matches)
             print(f"🚫 النتيجة النهائية: {len(final_matches)} مباراة مجدولة")
@@ -2902,10 +2990,10 @@ class ProfessionalFootballApp(MDApp):
             if final_matches:
                 # عرض معلومات الفلترات النشطة
                 filter_info = []
-                if self.filter_ns_perfect_1_1_enabled:
-                    filter_info.append("NS Perfect 1_1 (API)")
-                if self.filter_ns_perfect_2_2_enabled:  # ⭐ إضافة الفلتر الجديد
+                if self.filter_ns_perfect_2_2_enabled:
                     filter_info.append("NS Perfect 2_2 (API)")
+                if self.filter_ns_perfect_1_1_enabled:  # ⭐ إضافة الفلتر الجديد
+                    filter_info.append("NS Perfect 1_1 (API)")
                 
                 if filter_info:
                     filter_label = MDLabel(
@@ -2949,10 +3037,10 @@ class ProfessionalFootballApp(MDApp):
                 if required_league_ids:
                     no_matches_text += " with current league filters"
                 filter_texts = []
-                if self.filter_ns_perfect_1_1_enabled:
-                    filter_texts.append("NS Perfect 1_1 (API)")
-                if self.filter_ns_perfect_2_2_enabled:  # ⭐ إضافة الفلتر الجديد
+                if self.filter_ns_perfect_2_2_enabled:
                     filter_texts.append("NS Perfect 2_2 (API)")
+                if self.filter_ns_perfect_1_1_enabled:  # ⭐ إضافة الفلتر الجديد
+                    filter_texts.append("NS Perfect 1_1 (API)")
                 if filter_texts:
                     no_matches_text += f" and filters: {' + '.join(filter_texts)}"
                 self.show_empty_message(no_matches_text)
@@ -3030,10 +3118,10 @@ class ProfessionalFootballApp(MDApp):
             popup.home_team_name = match_data.get('full_home_team', match_data.get('home_team', ''))
             popup.away_team_name = match_data.get('full_away_team', match_data.get('away_team', ''))
             
-            popup.first_team_goals_for = "N/A"
-            popup.first_team_goals_against = "N/A"
-            popup.second_team_goals_for = "N/A"
-            popup.second_team_goals_against = "N/A"
+            popup.first_team_goals_for = "?"
+            popup.first_team_goals_against = "?"
+            popup.second_team_goals_for = "?"
+            popup.second_team_goals_against = "?"
             
             from kivy.core.window import Window
             Window.add_widget(popup)
@@ -3636,8 +3724,8 @@ class ProfessionalFootballApp(MDApp):
             first_color, first_for, first_against = extract_goals_and_color(first_stats)
             if first_color is None:
                 popup.first_team_color = "gray"  # ⭐ لون محايد للبيانات غير المتوفرة
-                popup.first_team_goals_for = "N/A"
-                popup.first_team_goals_against = "N/A"
+                popup.first_team_goals_for = "!"
+                popup.first_team_goals_against = "!"
             else:
                 popup.first_team_color = first_color
                 popup.first_team_goals_for = first_for
@@ -3646,8 +3734,8 @@ class ProfessionalFootballApp(MDApp):
             second_color, second_for, second_against = extract_goals_and_color(second_stats)
             if second_color is None:
                 popup.second_team_color = "gray"  # ⭐ لون محايد للبيانات غير المتوفرة
-                popup.second_team_goals_for = "N/A"
-                popup.second_team_goals_against = "N/A"
+                popup.second_team_goals_for = "!"
+                popup.second_team_goals_against = "!"
             else:
                 popup.second_team_color = second_color
                 popup.second_team_goals_for = second_for
@@ -4134,7 +4222,7 @@ class ProfessionalFootballApp(MDApp):
         
         filter_buttons_box = MDBoxLayout(orientation='vertical', spacing=dp(10), size_hint_y=None, height=dp(320))
         
-        # فلتر NS Perfect 1_1
+        # فلتر NS Perfect 2_2
         btn_ns_filter = MDBoxLayout(
             orientation='horizontal',
             size_hint_y=None,
@@ -4143,48 +4231,48 @@ class ProfessionalFootballApp(MDApp):
             spacing=dp(10)
         )
         btn_ns_filter_label = MDLabel(
-            text="📅 NS Filter (Perfect 1_1) for Calendar",
-            theme_text_color='Primary',
-            halign='left',
-            valign='center',
-            size_hint_x=0.8
-        )
-        btn_ns_filter_icon = MDIconButton(
-            icon= "checkbox-marked" if self.filter_ns_perfect_1_1_enabled else "checkbox-blank-outline",
-            theme_text_color='Custom',
-            text_color=get_color_from_hex("#4CAF50") if self.filter_ns_perfect_1_1_enabled else get_color_from_hex("#757575"),
-            on_release=lambda x: self.toggle_filter_ns_perfect_1_1(),
-            size_hint_x=0.2
-        )
-        btn_ns_filter.add_widget(btn_ns_filter_label)
-        btn_ns_filter.add_widget(btn_ns_filter_icon)
-        filter_buttons_box.add_widget(btn_ns_filter)
-        
-        # ⭐ فلتر NS Perfect 2_2 الجديد
-        btn_ns_filter_2_2 = MDBoxLayout(
-            orientation='horizontal',
-            size_hint_y=None,
-            height=dp(40),
-            padding=dp(5),
-            spacing=dp(10)
-        )
-        btn_ns_filter_2_2_label = MDLabel(
             text="📅 NS Filter (Perfect 2_2) for Calendar",
             theme_text_color='Primary',
             halign='left',
             valign='center',
             size_hint_x=0.8
         )
-        btn_ns_filter_2_2_icon = MDIconButton(
+        btn_ns_filter_icon = MDIconButton(
             icon= "checkbox-marked" if self.filter_ns_perfect_2_2_enabled else "checkbox-blank-outline",
             theme_text_color='Custom',
             text_color=get_color_from_hex("#4CAF50") if self.filter_ns_perfect_2_2_enabled else get_color_from_hex("#757575"),
-            on_release=lambda x: self.toggle_filter_ns_perfect_2_2(),  # ⭐ استدعاء الدالة الجديدة
+            on_release=lambda x: self.toggle_filter_ns_perfect_2_2(),
             size_hint_x=0.2
         )
-        btn_ns_filter_2_2.add_widget(btn_ns_filter_2_2_label)
-        btn_ns_filter_2_2.add_widget(btn_ns_filter_2_2_icon)
-        filter_buttons_box.add_widget(btn_ns_filter_2_2)
+        btn_ns_filter.add_widget(btn_ns_filter_label)
+        btn_ns_filter.add_widget(btn_ns_filter_icon)
+        filter_buttons_box.add_widget(btn_ns_filter)
+        
+        # ⭐ فلتر NS Perfect 1_1 الجديد
+        btn_ns_filter_1_1 = MDBoxLayout(
+            orientation='horizontal',
+            size_hint_y=None,
+            height=dp(40),
+            padding=dp(5),
+            spacing=dp(10)
+        )
+        btn_ns_filter_1_1_label = MDLabel(
+            text="📅 NS Filter (Perfect 1_1) for Calendar",
+            theme_text_color='Primary',
+            halign='left',
+            valign='center',
+            size_hint_x=0.8
+        )
+        btn_ns_filter_1_1_icon = MDIconButton(
+            icon= "checkbox-marked" if self.filter_ns_perfect_1_1_enabled else "checkbox-blank-outline",
+            theme_text_color='Custom',
+            text_color=get_color_from_hex("#4CAF50") if self.filter_ns_perfect_1_1_enabled else get_color_from_hex("#757575"),
+            on_release=lambda x: self.toggle_filter_ns_perfect_1_1(),  # ⭐ استدعاء الدالة الجديدة
+            size_hint_x=0.2
+        )
+        btn_ns_filter_1_1.add_widget(btn_ns_filter_1_1_label)
+        btn_ns_filter_1_1.add_widget(btn_ns_filter_1_1_icon)
+        filter_buttons_box.add_widget(btn_ns_filter_1_1)
         
         # الفلترات الأخرى الحالية
         btn_condition1 = MDRaisedButton(
@@ -4306,8 +4394,8 @@ class ProfessionalFootballApp(MDApp):
     def reset_all_filters(self):
         """إعادة تعيين جميع الفلترات"""
         self.reset_filter()
-        self.filter_ns_perfect_1_1_enabled = False
-        self.filter_ns_perfect_2_2_enabled = False  # ⭐ إضافة الفلتر الجديد
+        self.filter_ns_perfect_2_2_enabled = False
+        self.filter_ns_perfect_1_1_enabled = False  # ⭐ إضافة الفلتر الجديد
         
         self.save_filter_state()
         
