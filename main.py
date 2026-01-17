@@ -2341,7 +2341,7 @@ class ProfessionalFootballApp(MDApp):
         self.storage.save_filter_state('filter_ns_perfect_2_2_enabled', self.filter_ns_perfect_2_2_enabled)
 
     def filter_ns_perfect_1_1(self, match_data):
-        """فلتر NS Perfect 1_1 المحسّن مع حفظ المباراة عند النجاح"""
+
         try:
             match_id = match_data.get('id')
             home_team_id = match_data.get('home_team_id')
@@ -2360,35 +2360,24 @@ class ProfessionalFootballApp(MDApp):
                     match_date = dt.strftime('%Y-%m-%d')
                 except:
                     match_date = datetime.now().strftime('%Y-%m-%d')
-            
-            home_result = self._get_team_goals_for_filter_with_cache(
+
+            home_goals_for, home_goals_against = self._get_team_goals_with_against(
                 home_team_id, league_id, season, True, match_date
             )
-            away_result = self._get_team_goals_for_filter_with_cache(
+            away_goals_for, away_goals_against = self._get_team_goals_with_against(
                 away_team_id, league_id, season, False, match_date
             )
             
-            if home_result[0] is None or away_result[0] is None:
+            if home_goals_for is None or away_goals_for is None:
                 result = "❌ no (Incomplete match data)"
                 self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", result)
                 return result
-                
-            home_goals, home_count = home_result
-            away_goals, away_count = away_result
             
-            if home_count < 3 or away_count < 3:
-                result = "❌ no (Not enough matches)"
-                self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", result)
-                return result
-                
-            home_total_goals = home_goals
-            away_total_goals = away_goals
+            home_total_goals = home_goals_for
+            away_total_goals = away_goals_for
             
-            if home_total_goals == away_total_goals:
-                result = f"✅ yes (Equal goals: {home_total_goals}-{away_total_goals})"
-                # حفظ المباراة في المفضلة
-                self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", result)
-                return result
+            home_against_total = home_goals_against
+            away_against_total = away_goals_against
             
             home_rank_current_data = self.fetch_team_standings_with_cache(home_team_id, league_id, season)
             away_rank_current_data = self.fetch_team_standings_with_cache(away_team_id, league_id, season)
@@ -2400,13 +2389,36 @@ class ProfessionalFootballApp(MDApp):
             if status not in ['NS', 'TBD']:
                 return "❌ no (Match already started)"
             
+
             try:
-                home_goals_int = int(home_goals)
-                away_goals_int = int(away_goals)
+                home_goals_int = int(home_goals_for)
+                away_goals_int = int(away_goals_for)
+                home_against_int = int(home_goals_against)
+                away_against_int = int(away_goals_against)
             except (ValueError, TypeError):
                 return "❌ no (Invalid goals data)"
             
+            # التحقق من الشروط الجديدة
+            goals_diff = abs(home_goals_int - away_goals_int)
+            
+            winner_label = ""
+            loser_label = ""
+            winner_goals = 0
+            loser_goals = 0
+            winner_rank_int = 0
+            loser_rank_int = 0
 
+            if home_goals_int > away_goals_int and home_against_int > away_against_int and (home_against_int - away_against_int) > 4:
+                result = f"✅ yes (Home scored more & received more by >4: {home_against_int}-{away_against_int})"
+                self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", result)
+                return result
+
+            elif away_goals_int > home_goals_int and away_against_int > home_against_int and (away_against_int - home_against_int) > 4:
+                result = f"✅ yes (Away scored more & received more by >4: {away_against_int}-{home_against_int})"
+                self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", result)
+                return result
+
+            
             if home_goals_int > away_goals_int:
                 winner_label = "Home"
                 winner_goals = home_goals_int
@@ -2445,20 +2457,16 @@ class ProfessionalFootballApp(MDApp):
                     (16, 8), (16, 9), (16, 10), (16, 11), (16, 12), (16, 13), (16, 14), (16, 15),
                     (17, 15)
                 }
-                
                 current_pair = (winner_rank_int, loser_rank_int)
 
                 if current_pair in forbidden_pairs:
                     return f"❌ no (Forbidden Rank Pair: +{winner_rank_int} vs -{loser_rank_int})"
-
-                goals_diff = winner_goals - loser_goals
                 
                 result = f"✅ yes (+:{winner_label} {winner_goals} | -:{loser_label} {loser_goals} | [+]{winner_rank_int} vs [-]{loser_rank_int} | Diff: +{goals_diff})"
-                # حفظ المباراة في المفضلة
                 self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", result)
                 return result
-            
-            if away_goals_int > home_goals_int:
+                
+            elif away_goals_int > home_goals_int:
                 winner_label = "Away"
                 winner_goals = away_goals_int
                 loser_label = "Home"
@@ -2478,7 +2486,7 @@ class ProfessionalFootballApp(MDApp):
                     return f"❌ no (Rank Processing Error: +:{away_rank_current}, -:{home_rank_current})"
 
                 forbidden_pairs = {
-                   (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (1, 10), (1, 11), (1, 12),
+                    (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (1, 10), (1, 11), (1, 12),
                     (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14),
                     (3, 2), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15),
                     (4, 2), (4, 3), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15), (4, 16),
@@ -2496,22 +2504,52 @@ class ProfessionalFootballApp(MDApp):
                     (16, 8), (16, 9), (16, 10), (16, 11), (16, 12), (16, 13), (16, 14), (16, 15),
                     (17, 15)
                 }
-                
                 current_pair = (winner_rank_int, loser_rank_int)
 
                 if current_pair in forbidden_pairs:
                     return f"❌ no (Forbidden Rank Pair: +{winner_rank_int} vs -{loser_rank_int})"
-
-                goals_diff = winner_goals - loser_goals
                 
                 result = f"✅ yes (+:{winner_label} {winner_goals} | -:{loser_label} {loser_goals} | [+]{winner_rank_int} vs [-]{loser_rank_int} | Diff: +{goals_diff})"
-                # حفظ المباراة في المفضلة
+                self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", result)
+                return result
+            
+            if home_goals_int == away_goals_int:
+                result = f"✅ yes (Equal goals: {home_goals_int}-{away_goals_int})"
                 self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", result)
                 return result
                 
         except Exception as e:
             print(f"NS Perfect 1_1 Filter Error: {e}")
             return "❌ no (System Error)"
+
+    def _get_team_goals_with_against(self, team_id, league_id, season, is_home_team, match_date=None):
+        """جلب أهداف for و against معاً"""
+        try:
+            if not match_date:
+                match_date = datetime.now().strftime('%Y-%m-%d')
+            
+            cached_data = self.get_team_goals_from_cache(team_id, league_id, season, is_home_team, match_date)
+            
+            if cached_data:
+                goals_for = cached_data.get('goals_for', 0)
+                goals_against = cached_data.get('goals_against', 0)
+                return goals_for, goals_against
+            
+            print(f"🌐 جلب الأهداف للفلتر من API للفريق {team_id}")
+            stats = self._fetch_team_last_3_matches(team_id, league_id, season, is_home_team)
+            
+            if stats:
+                stats_dict = self._parse_stats_to_dict(stats)
+                if stats_dict:
+                    goals_for = stats_dict.get('goals_for', 0)
+                    goals_against = stats_dict.get('goals_against', 0)
+                    return goals_for, goals_against
+            
+            return None, None
+                
+        except Exception as e:
+            print(f"Error in _get_team_goals_with_against for team {team_id}: {e}")
+            return None, None
 
     def filter_ns_perfect_2_2(self, match_data):
         """فلتر NS Perfect 1_1 مع الشروط الثلاثة، ودعم أكثر من tuple في goals_condition مع حفظ المباراة عند النجاح"""
@@ -5549,16 +5587,8 @@ class ProfessionalFootballApp(MDApp):
             losing_stats_dict = self.get_team_goals_from_cache(losing_team_id, league_id, season, losing_is_home, match_date)
             winning_stats_dict = self.get_team_goals_from_cache(winning_team_id, league_id, season, not losing_is_home, match_date)
             
-            losing_goals_for = losing_stats_dict.get('goals_for', 0) if losing_stats_dict else 0
-            losing_goals_against = losing_stats_dict.get('goals_against', 0) if losing_stats_dict else 0
-            winning_goals_for = winning_stats_dict.get('goals_for', 0) if winning_stats_dict else 0
-            winning_goals_against = winning_stats_dict.get('goals_against', 0) if winning_stats_dict else 0
-            
-            if losing_goals_against > 7:
-                return "❌ no"
-            
-            if (losing_goals_against - winning_goals_against) > 4:
-                return "❌ no"
+            losing_goals_for = losing_stats_dict.get('goals_for', 0) if losing_stats_dict else 0          
+            winning_goals_for = winning_stats_dict.get('goals_for', 0) if winning_stats_dict else 0            
             
             if losing_goals_for >= winning_goals_for:
                 return "✅ yes"
