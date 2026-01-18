@@ -2212,17 +2212,13 @@ class ProfessionalFootballApp(MDApp):
                 print("⚠️ لا دوريات مختارة للكاش، سيتم تخطي الكاش")
 
             if self.filter_ns_perfect_1_1_enabled or self.filter_ns_perfect_2_2_enabled:
-                print("🚫 الفلتر active - استخدام الكاش فقط مع حذف المباريات المخفية أولًا")
+                print("🚫 الفلتر active - استخدام الكاش فقط مع حذف المباريات المخفية والمفضلة أولًا")
 
-                # استخدام set للفلترة السريعة
-                hidden_ids = {m.get('id') for m in self.hidden_matches}
-                non_hidden_matches = [
-                    match for match in all_cached_matches 
-                    if match.get('id') not in hidden_ids
-                ]
+                # فلترة المباريات المخفية والمفضلة قبل أي فلترة أخرى
+                non_hidden_and_favorites_removed = self.filter_out_hidden_and_favorite_matches(all_cached_matches)
 
-                print(f"📊 النتيجة من الكاش بعد حذف المخفية: {len(non_hidden_matches)} مباراة")
-                return non_hidden_matches
+                print(f"📊 النتيجة من الكاش بعد حذف المخفية والمفضلة: {len(non_hidden_and_favorites_removed)} مباراة")
+                return non_hidden_and_favorites_removed
 
             print("🌐 تحميل جميع المباريات مرة واحدة من API...")
             url = f"{self.base_url}/fixtures"
@@ -2305,8 +2301,7 @@ class ProfessionalFootballApp(MDApp):
         return filtered
 
     def filter_out_hidden_and_favorite_matches(self, matches_list):
-        """فلترة المباريات المخفية والمفضلة باستخدام set"""
-        # استخدام set للكشف السريع
+
         hidden_ids = {m.get('id') for m in self.hidden_matches}
         favorite_ids = {f.get('id') for f in self.favorites}
         
@@ -2340,220 +2335,188 @@ class ProfessionalFootballApp(MDApp):
         self.storage.save_filter_state('filter_ns_perfect_1_1_enabled', self.filter_ns_perfect_1_1_enabled)
         self.storage.save_filter_state('filter_ns_perfect_2_2_enabled', self.filter_ns_perfect_2_2_enabled)
 
-    def filter_ns_perfect_1_1(self, match_data):
-
+    def filter_ns_perfect_1_1_batch(self, matches_batch):
         try:
-            match_id = match_data.get('id')
-            home_team_id = match_data.get('home_team_id')
-            away_team_id = match_data.get('away_team_id')
-            league_id = match_data.get('league_id')
-            season = match_data.get('season')
+            filtered_matches = []
             
-            if not season:
-                season = datetime.now().year
-            
-            time_str = match_data.get('time', '')
-            match_date = ""
-            if time_str:
+            for match_data in matches_batch:
                 try:
-                    dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-                    match_date = dt.strftime('%Y-%m-%d')
-                except:
-                    match_date = datetime.now().strftime('%Y-%m-%d')
-
-            home_goals_for, home_goals_against = self._get_team_goals_with_against(
-                home_team_id, league_id, season, True, match_date
-            )
-            away_goals_for, away_goals_against = self._get_team_goals_with_against(
-                away_team_id, league_id, season, False, match_date
-            )
-            
-            if home_goals_for is None or away_goals_for is None:
-                result = "❌ no (Incomplete match data)"
-                self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", result)
-                return result
-            
-            home_total_goals = home_goals_for
-            away_total_goals = away_goals_for
-            
-            home_against_total = home_goals_against
-            away_against_total = away_goals_against
-            
-            home_rank_current_data = self.fetch_team_standings_with_cache(home_team_id, league_id, season)
-            away_rank_current_data = self.fetch_team_standings_with_cache(away_team_id, league_id, season)
-            
-            home_rank_current = str(home_rank_current_data.get('current_rank', 'N/A')) if home_rank_current_data else 'N/A'
-            away_rank_current = str(away_rank_current_data.get('current_rank', 'N/A')) if away_rank_current_data else 'N/A'
-            
-            status = match_data.get('status', 'NS')
-            if status not in ['NS', 'TBD']:
-                return "❌ no (Match already started)"
-            
-
-            try:
-                home_goals_int = int(home_goals_for)
-                away_goals_int = int(away_goals_for)
-                home_against_int = int(home_goals_against)
-                away_against_int = int(away_goals_against)
-            except (ValueError, TypeError):
-                return "❌ no (Invalid goals data)"
-            
-            # التحقق من الشروط الجديدة
-            goals_diff = abs(home_goals_int - away_goals_int)
-            
-            winner_label = ""
-            loser_label = ""
-            winner_goals = 0
-            loser_goals = 0
-            winner_rank_int = 0
-            loser_rank_int = 0
-
-            if home_goals_int > away_goals_int and home_against_int > away_against_int and (home_against_int - away_against_int) > 4:
-                result = f"✅ yes (Home scored more & received more by >4: {home_against_int}-{away_against_int})"
-                self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", result)
-                return result
-
-            elif away_goals_int > home_goals_int and away_against_int > home_against_int and (away_against_int - home_against_int) > 4:
-                result = f"✅ yes (Away scored more & received more by >4: {away_against_int}-{home_against_int})"
-                self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", result)
-                return result
-
-            
-            if home_goals_int > away_goals_int:
-                winner_label = "Home"
-                winner_goals = home_goals_int
-                loser_label = "Away"
-                loser_goals = away_goals_int
-                
-                try:
-                    winner_rank_str = str(home_rank_current).strip()
-                    loser_rank_str = str(away_rank_current).strip()
-
-                    if not winner_rank_str.isdigit() or not loser_rank_str.isdigit():
-                        return f"❌ no (Invalid Rank Format: +:{home_rank_current}, -:{away_rank_current})"
-
-                    winner_rank_int = int(winner_rank_str)
-                    loser_rank_int = int(loser_rank_str)
+                    match_id = match_data.get('id')
+                    home_team_id = match_data.get('home_team_id')
+                    away_team_id = match_data.get('away_team_id')
+                    league_id = match_data.get('league_id')
+                    season = match_data.get('season')
                     
-                except (ValueError, TypeError):
-                    return f"❌ no (Rank Processing Error: +:{home_rank_current}, -:{away_rank_current})"
+                    if not season:
+                        season = datetime.now().year
+                    
+                    time_str = match_data.get('time', '')
+                    match_date = ""
+                    if time_str:
+                        try:
+                            dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                            match_date = dt.strftime('%Y-%m-%d')
+                        except:
+                            match_date = datetime.now().strftime('%Y-%m-%d')
 
-                forbidden_pairs = {
-                    (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (1, 10), (1, 11), (1, 12),
+                    home_goals_for, home_goals_against = self._get_team_goals_with_against(
+                        home_team_id, league_id, season, True, match_date
+                    )
+                    away_goals_for, away_goals_against = self._get_team_goals_with_against(
+                        away_team_id, league_id, season, False, match_date
+                    )
+                    
+                    if home_goals_for is None or away_goals_for is None:
+                        continue
+                    
+                    home_total_goals = home_goals_for
+                    away_total_goals = away_goals_for
+                    
+                    home_against_total = home_goals_against
+                    away_against_total = away_goals_against
+                    
+                    home_rank_current_data = self.fetch_team_standings_with_cache(home_team_id, league_id, season)
+                    away_rank_current_data = self.fetch_team_standings_with_cache(away_team_id, league_id, season)
+                    
+                    home_rank_current = str(home_rank_current_data.get('current_rank', 'N/A')) if home_rank_current_data else 'N/A'
+                    away_rank_current = str(away_rank_current_data.get('current_rank', 'N/A')) if away_rank_current_data else 'N/A'
+                    
+                    status = match_data.get('status', 'NS')
+                    if status not in ['NS', 'TBD']:
+                        continue
+                    
+                    try:
+                        home_goals_int = int(home_goals_for)
+                        away_goals_int = int(away_goals_for)
+                        home_against_int = int(home_goals_against)
+                        away_against_int = int(away_goals_against)
+                    except (ValueError, TypeError):
+                        continue
+                    
+                    # التحقق من الشروط
+                    goals_diff = abs(home_goals_int - away_goals_int)
+                    
+                    if home_goals_int > away_goals_int and home_against_int > away_against_int and (home_against_int - away_against_int) > 4:
+                        self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", f"Home scored more & received more by >4: {home_against_int}-{away_against_int}")
+                        filtered_matches.append(match_data)
+                        continue
+                    
+                    elif away_goals_int > home_goals_int and away_against_int > home_against_int and (away_against_int - home_against_int) > 4:
+                        self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", f"Away scored more & received more by >4: {away_against_int}-{home_against_int}")
+                        filtered_matches.append(match_data)
+                        continue
+                    
+                    if home_goals_int > away_goals_int:
+                        winner_label = "Home"
+                        winner_goals = home_goals_int
+                        loser_label = "Away"
+                        loser_goals = away_goals_int
+                        
+                        try:
+                            winner_rank_str = str(home_rank_current).strip()
+                            loser_rank_str = str(away_rank_current).strip()
+
+                            if not winner_rank_str.isdigit() or not loser_rank_str.isdigit():
+                                continue
+
+                            winner_rank_int = int(winner_rank_str)
+                            loser_rank_int = int(loser_rank_str)
+                            
+                        except (ValueError, TypeError):
+                            continue
+
+                        forbidden_pairs = {
+                    (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (1, 10), (1, 11), (1, 12), (1, 13),
                     (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14),
-                    (3, 2), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15),
+                    (3, 2), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (3, 16),
                     (4, 2), (4, 3), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15), (4, 16),
                     (5, 2), (5, 3), (5, 4), (5, 6), (5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16),
                     (6, 2), (6, 3), (6, 4), (6, 5), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16),
                     (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (7, 8), (7, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (7, 16),
                     (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (8, 7), (8, 9), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16),
                     (9, 2), (9, 3), (9, 4), (9, 5), (9, 6), (9, 7), (9, 8), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16),
-                    (10, 4), (10, 5), (10, 6), (10, 7), (10, 8), (10, 9), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (10, 17), (10, 18),
-                    (11, 4), (11, 6), (11, 7), (11, 8), (11, 9), (11, 10), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18),
-                    (12, 6), (12, 7), (12, 8), (12, 9), (12, 10), (12, 11), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (12, 18),
-                    (13, 7), (13, 8), (13, 10), (13, 11), (13, 12), (13, 14), (13, 15), (13, 16), (13, 17), (13, 18),
+                    (10, 3), (10, 4), (10, 5), (10, 6), (10, 7), (10, 8), (10, 9), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (10, 17), (10, 18),
+                    (11, 4), (11, 6), (11, 7), (11, 8), (11, 9), (11, 10), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (11, 19), (11, 20),
+                    (12, 6), (12, 7), (12, 8), (12, 9), (12, 10), (12, 11), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (12, 18), (12, 19), (12, 20),
+                    (13, 7), (13, 8), (13, 10), (13, 11), (13, 12), (13, 14), (13, 15), (13, 16), (13, 17), (13, 18), (13, 19), (13, 20),
                     (14, 8), (14, 9), (14, 10), (14, 11), (14, 12), (14, 13), (14, 15), (14, 16), (14, 17), (14, 18),
                     (15, 8), (15, 9), (15, 10), (15, 11), (15, 12), (15, 13), (15, 14),
                     (16, 8), (16, 9), (16, 10), (16, 11), (16, 12), (16, 13), (16, 14), (16, 15),
                     (17, 15)
                 }
-                current_pair = (winner_rank_int, loser_rank_int)
+                        current_pair = (winner_rank_int, loser_rank_int)
 
-                if current_pair in forbidden_pairs:
-                    return f"❌ no (Forbidden Rank Pair: +{winner_rank_int} vs -{loser_rank_int})"
-                
-                result = f"✅ yes (+:{winner_label} {winner_goals} | -:{loser_label} {loser_goals} | [+]{winner_rank_int} vs [-]{loser_rank_int} | Diff: +{goals_diff})"
-                self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", result)
-                return result
-                
-            elif away_goals_int > home_goals_int:
-                winner_label = "Away"
-                winner_goals = away_goals_int
-                loser_label = "Home"
-                loser_goals = home_goals_int
-                
-                try:
-                    winner_rank_str = str(away_rank_current).strip()
-                    loser_rank_str = str(home_rank_current).strip()
+                        if current_pair in forbidden_pairs:
+                            continue
+                        
+                        self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", f"+:{winner_label} {winner_goals} | -:{loser_label} {loser_goals}")
+                        filtered_matches.append(match_data)
+                        continue
+                        
+                    elif away_goals_int > home_goals_int:
+                        winner_label = "Away"
+                        winner_goals = away_goals_int
+                        loser_label = "Home"
+                        loser_goals = home_goals_int
+                        
+                        try:
+                            winner_rank_str = str(away_rank_current).strip()
+                            loser_rank_str = str(home_rank_current).strip()
 
-                    if not winner_rank_str.isdigit() or not loser_rank_str.isdigit():
-                        return f"❌ no (Invalid Rank Format: +:{away_rank_current}, -:{home_rank_current})"
+                            if not winner_rank_str.isdigit() or not loser_rank_str.isdigit():
+                                continue
 
-                    winner_rank_int = int(winner_rank_str)
-                    loser_rank_int = int(loser_rank_str)
-                    
-                except (ValueError, TypeError):
-                    return f"❌ no (Rank Processing Error: +:{away_rank_current}, -:{home_rank_current})"
+                            winner_rank_int = int(winner_rank_str)
+                            loser_rank_int = int(loser_rank_str)
+                            
+                        except (ValueError, TypeError):
+                            continue
 
-                forbidden_pairs = {
-                    (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (1, 10), (1, 11), (1, 12),
+                        forbidden_pairs = {
+                    (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (1, 10), (1, 11), (1, 12), (1, 13),
                     (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14),
-                    (3, 2), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15),
+                    (3, 2), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (3, 16),
                     (4, 2), (4, 3), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15), (4, 16),
                     (5, 2), (5, 3), (5, 4), (5, 6), (5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16),
                     (6, 2), (6, 3), (6, 4), (6, 5), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16),
                     (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (7, 8), (7, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (7, 16),
                     (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (8, 7), (8, 9), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16),
                     (9, 2), (9, 3), (9, 4), (9, 5), (9, 6), (9, 7), (9, 8), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16),
-                    (10, 4), (10, 5), (10, 6), (10, 7), (10, 8), (10, 9), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (10, 17), (10, 18),
-                    (11, 4), (11, 6), (11, 7), (11, 8), (11, 9), (11, 10), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18),
-                    (12, 6), (12, 7), (12, 8), (12, 9), (12, 10), (12, 11), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (12, 18),
-                    (13, 7), (13, 8), (13, 10), (13, 11), (13, 12), (13, 14), (13, 15), (13, 16), (13, 17), (13, 18),
+                    (10, 3), (10, 4), (10, 5), (10, 6), (10, 7), (10, 8), (10, 9), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (10, 17), (10, 18),
+                    (11, 4), (11, 6), (11, 7), (11, 8), (11, 9), (11, 10), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (11, 19), (11, 20),
+                    (12, 6), (12, 7), (12, 8), (12, 9), (12, 10), (12, 11), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (12, 18), (12, 19), (12, 20),
+                    (13, 7), (13, 8), (13, 10), (13, 11), (13, 12), (13, 14), (13, 15), (13, 16), (13, 17), (13, 18), (13, 19), (13, 20),
                     (14, 8), (14, 9), (14, 10), (14, 11), (14, 12), (14, 13), (14, 15), (14, 16), (14, 17), (14, 18),
                     (15, 8), (15, 9), (15, 10), (15, 11), (15, 12), (15, 13), (15, 14),
                     (16, 8), (16, 9), (16, 10), (16, 11), (16, 12), (16, 13), (16, 14), (16, 15),
                     (17, 15)
                 }
-                current_pair = (winner_rank_int, loser_rank_int)
+                        current_pair = (winner_rank_int, loser_rank_int)
 
-                if current_pair in forbidden_pairs:
-                    return f"❌ no (Forbidden Rank Pair: +{winner_rank_int} vs -{loser_rank_int})"
-                
-                result = f"✅ yes (+:{winner_label} {winner_goals} | -:{loser_label} {loser_goals} | [+]{winner_rank_int} vs [-]{loser_rank_int} | Diff: +{goals_diff})"
-                self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", result)
-                return result
+                        if current_pair in forbidden_pairs:
+                            continue
+                        
+                        self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", f"+:{winner_label} {winner_goals} | -:{loser_label} {loser_goals}")
+                        filtered_matches.append(match_data)
+                        continue
+                    
+                    if home_goals_int == away_goals_int:
+                        self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", f"Equal goals: {home_goals_int}-{away_goals_int}")
+                        filtered_matches.append(match_data)
+                        
+                except Exception as e:
+                    print(f"NS Perfect 1_1 Filter Error for match {match_data.get('id')}: {e}")
+                    continue
             
-            if home_goals_int == away_goals_int:
-                result = f"✅ yes (Equal goals: {home_goals_int}-{away_goals_int})"
-                self._auto_save_to_favorites_if_not_exists(match_data, "perfect_1_1", result)
-                return result
-                
+            return filtered_matches
         except Exception as e:
-            print(f"NS Perfect 1_1 Filter Error: {e}")
-            return "❌ no (System Error)"
+            print(f"❌ خطأ في filter_ns_perfect_1_1_batch: {e}")
+            return []
 
-    def _get_team_goals_with_against(self, team_id, league_id, season, is_home_team, match_date=None):
-        """جلب أهداف for و against معاً"""
-        try:
-            if not match_date:
-                match_date = datetime.now().strftime('%Y-%m-%d')
-            
-            cached_data = self.get_team_goals_from_cache(team_id, league_id, season, is_home_team, match_date)
-            
-            if cached_data:
-                goals_for = cached_data.get('goals_for', 0)
-                goals_against = cached_data.get('goals_against', 0)
-                return goals_for, goals_against
-            
-            print(f"🌐 جلب الأهداف للفلتر من API للفريق {team_id}")
-            stats = self._fetch_team_last_3_matches(team_id, league_id, season, is_home_team)
-            
-            if stats:
-                stats_dict = self._parse_stats_to_dict(stats)
-                if stats_dict:
-                    goals_for = stats_dict.get('goals_for', 0)
-                    goals_against = stats_dict.get('goals_against', 0)
-                    return goals_for, goals_against
-            
-            return None, None
-                
-        except Exception as e:
-            print(f"Error in _get_team_goals_with_against for team {team_id}: {e}")
-            return None, None
+    def filter_ns_perfect_2_2_batch(self, matches_batch):
 
-    def filter_ns_perfect_2_2(self, match_data):
-        """فلتر NS Perfect 1_1 مع الشروط الثلاثة، ودعم أكثر من tuple في goals_condition مع حفظ المباراة عند النجاح"""
         try:
+            filtered_matches = []
             forbidden_groups = [
                 {
                     'current_rank': {(1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (2, 10), (2, 11), (2, 12), (3, 10), (3, 11), (3, 12), (4, 10), (4, 11), (4, 12), (4, 13)},
@@ -3237,107 +3200,135 @@ class ProfessionalFootballApp(MDApp):
                 }
             ]
             
-            league_id = match_data.get('league_id')
-            season = match_data.get('season')
-            
-            if not season:
-                season = datetime.now().year
-            
-            try:
-                season = int(season)
-                last_season = season - 1
-            except:
-                return "❌ no (Invalid season format)"
-
-            home_team_id = match_data.get('home_team_id')
-            away_team_id = match_data.get('away_team_id')
-            
-            print(f"🔍 فلتر NS Perfect 1_1: الدوري {league_id}, الموسم {season}")
-
-            home_current_data = self.fetch_team_standings_with_cache(home_team_id, league_id, season)
-            away_current_data = self.fetch_team_standings_with_cache(away_team_id, league_id, season)
-            
-            if not home_current_data or not away_current_data:
-                return "❌ no (Missing current season data)"
-
-            home_current_rank = home_current_data.get('current_rank', 'N/A')
-            away_current_rank = away_current_data.get('current_rank', 'N/A')
-            
-            home_last_data = self._fetch_last_season_standings_with_cache(home_team_id, league_id, last_season)
-            away_last_data = self._fetch_last_season_standings_with_cache(away_team_id, league_id, last_season)
-            
-            home_last_rank = home_last_data.get('current_rank', 'N/A') if home_last_data else 'N/A'
-            away_last_rank = away_last_data.get('current_rank', 'N/A') if away_last_data else 'N/A'
-            
-            if home_last_rank in ("N/A", "NEW") or away_last_rank in ("N/A", "NEW"):
-                return "❌ no (N/A in last season standings)"
-            
-            time_str = match_data.get('time', '')
-            match_date = ""
-            if time_str:
+            for match_data in matches_batch:
                 try:
-                    dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-                    match_date = dt.strftime('%Y-%m-%d')
-                except:
-                    match_date = datetime.now().strftime('%Y-%m-%d')
-            
-            home_goals_data = self.get_team_goals_from_cache(home_team_id, league_id, season, True, match_date)
-            home_goals_for = home_goals_data.get('goals_for', 0) if home_goals_data else 0
-            home_goals_against = home_goals_data.get('goals_against', 0) if home_goals_data else 0
-            
-            away_goals_data = self.get_team_goals_from_cache(away_team_id, league_id, season, False, match_date)
-            away_goals_for = away_goals_data.get('goals_for', 0) if away_goals_data else 0
-            away_goals_against = away_goals_data.get('goals_against', 0) if away_goals_data else 0
-            
-            def clean_rank(rank_str):
-                if rank_str == 'N/A' or rank_str == 'NEW':
-                    return 0
-                digits = ''.join(filter(str.isdigit, str(rank_str)))
-                return int(digits) if digits else 0
-            
-            ch = clean_rank(home_current_rank)
-            ca = clean_rank(away_current_rank)
-            lh = clean_rank(home_last_rank)
-            la = clean_rank(away_last_rank)
-            
-            current_pair = (ch, ca)
-            last_pair = (lh, la)
-            current_pair_rev = (ca, ch)
-            last_pair_rev = (la, lh)
-            
-            print(f"📊 الرتب: الحالي ({ch}, {ca}) | الماضي ({lh}, {la})")
-            print(f"🎯 الأهداف: المنزل ({home_goals_for}, {home_goals_against}) | الضيف ({away_goals_for}, {away_goals_against})")
-            
-            for group in forbidden_groups:
-                goals_set = group['goals_condition']
+                    league_id = match_data.get('league_id')
+                    season = match_data.get('season')
+                    
+                    if not season:
+                        season = datetime.now().year
+                    
+                    try:
+                        season = int(season)
+                        last_season = season - 1
+                    except:
+                        continue
 
-                # تحقق من التطابق العادي والمعكوس
-                normal_match = (current_pair in group['current_rank']) and (last_pair in group['last_season'])
-                reversed_match = (current_pair_rev in group['current_rank']) and (last_pair_rev in group['last_season'])
+                    home_team_id = match_data.get('home_team_id')
+                    away_team_id = match_data.get('away_team_id')
+                    
+                    home_current_data = self.fetch_team_standings_with_cache(home_team_id, league_id, season)
+                    away_current_data = self.fetch_team_standings_with_cache(away_team_id, league_id, season)
+                    
+                    if not home_current_data or not away_current_data:
+                        continue
 
-                # تحقق من الأهداف حسب اتجاه التطابق
-                goals_match = False
-                if normal_match:
-                    # نأخذ فقط أهداف الفريق away
-                    if (away_goals_for, away_goals_against) in goals_set:
-                        goals_match = True
-                elif reversed_match:
-                    # نأخذ فقط أهداف الفريق home
-                    if (home_goals_for, home_goals_against) in goals_set:
-                        goals_match = True
-
-                # شرط رفض المباراة إذا تحققت الثلاثة معاً بطريقة صحيحة
-                if (normal_match or reversed_match) and goals_match:
-                    return f"❌ no (All 3 conditions met: Current rank {current_pair}, Last season {last_pair}, Goals match {[(f,g) for (f,g) in goals_set]})"
+                    home_current_rank = home_current_data.get('current_rank', 'N/A')
+                    away_current_rank = away_current_data.get('current_rank', 'N/A')
+                    
+                    home_last_data = self._fetch_last_season_standings_with_cache(home_team_id, league_id, last_season)
+                    away_last_data = self._fetch_last_season_standings_with_cache(away_team_id, league_id, last_season)
+                    
+                    home_last_rank = home_last_data.get('current_rank', 'N/A') if home_last_data else 'N/A'
+                    away_last_rank = away_last_data.get('current_rank', 'N/A') if away_last_data else 'N/A'
+                    
+                    if home_last_rank in ("N/A", "NEW") or away_last_rank in ("N/A", "NEW"):
+                        continue
+                    
+                    time_str = match_data.get('time', '')
+                    match_date = ""
+                    if time_str:
+                        try:
+                            dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                            match_date = dt.strftime('%Y-%m-%d')
+                        except:
+                            match_date = datetime.now().strftime('%Y-%m-%d')
+                    
+                    home_goals_data = self.get_team_goals_from_cache(home_team_id, league_id, season, True, match_date)
+                    home_goals_for = home_goals_data.get('goals_for', 0) if home_goals_data else 0
+                    home_goals_against = home_goals_data.get('goals_against', 0) if home_goals_data else 0
+                    
+                    away_goals_data = self.get_team_goals_from_cache(away_team_id, league_id, season, False, match_date)
+                    away_goals_for = away_goals_data.get('goals_for', 0) if away_goals_data else 0
+                    away_goals_against = away_goals_data.get('goals_against', 0) if away_goals_data else 0
+                    
+                    def clean_rank(rank_str):
+                        if rank_str == 'N/A' or rank_str == 'NEW':
+                            return 0
+                        digits = ''.join(filter(str.isdigit, str(rank_str)))
+                        return int(digits) if digits else 0
+                    
+                    ch = clean_rank(home_current_rank)
+                    ca = clean_rank(away_current_rank)
+                    lh = clean_rank(home_last_rank)
+                    la = clean_rank(away_last_rank)
+                    
+                    current_pair = (ch, ca)
+                    last_pair = (lh, la)
+                    current_pair_rev = (ca, ch)
+                    last_pair_rev = (la, lh)
+                    
+                    matched = False
+                    for group in forbidden_groups:
+                        goals_set = group['goals_condition']
+                        
+                        normal_match = (current_pair in group['current_rank']) and (last_pair in group['last_season'])
+                        reversed_match = (current_pair_rev in group['current_rank']) and (last_pair_rev in group['last_season'])
+                        
+                        goals_match = False
+                        if normal_match:
+                            if (away_goals_for, away_goals_against) in goals_set:
+                                goals_match = True
+                        elif reversed_match:
+                            if (home_goals_for, home_goals_against) in goals_set:
+                                goals_match = True
+                        
+                        if (normal_match or reversed_match) and goals_match:
+                            matched = True
+                            break
+                    
+                    if not matched:
+                        self._auto_save_to_favorites_if_not_exists(match_data, "perfect_2_2", "Conditions not all met")
+                        filtered_matches.append(match_data)
+                        
+                except Exception as e:
+                    print(f"NS Perfect 2_2 Filter Error for match {match_data.get('id')}: {e}")
+                    continue
             
-            result = f"✅ yes (Conditions not all met)"
-            # حفظ المباراة في المفضلة
-            self._auto_save_to_favorites_if_not_exists(match_data, "perfect_2_2", result)
-            return result
+            return filtered_matches
             
         except Exception as e:
-            print(f"❌ ERROR in filter_ns_perfect_1_1: {e}")
-            return f"❌ no (Error: {str(e)[:50]})"
+            print(f"❌ ERROR in filter_ns_perfect_2_2_batch: {e}")
+            return []
+
+    def _get_team_goals_with_against(self, team_id, league_id, season, is_home_team, match_date=None):
+        """جلب أهداف for و against معاً"""
+        try:
+            if not match_date:
+                match_date = datetime.now().strftime('%Y-%m-%d')
+            
+            cached_data = self.get_team_goals_from_cache(team_id, league_id, season, is_home_team, match_date)
+            
+            if cached_data:
+                goals_for = cached_data.get('goals_for', 0)
+                goals_against = cached_data.get('goals_against', 0)
+                return goals_for, goals_against
+            
+            print(f"🌐 جلب الأهداف للفلتر من API للفريق {team_id}")
+            stats = self._fetch_team_last_3_matches(team_id, league_id, season, is_home_team)
+            
+            if stats:
+                stats_dict = self._parse_stats_to_dict(stats)
+                if stats_dict:
+                    goals_for = stats_dict.get('goals_for', 0)
+                    goals_against = stats_dict.get('goals_against', 0)
+                    return goals_for, goals_against
+            
+            return None, None
+                
+        except Exception as e:
+            print(f"Error in _get_team_goals_with_against for team {team_id}: {e}")
+            return None, None
 
     def _auto_save_to_favorites_if_not_exists(self, match_data, filter_type, filter_result):
         """حفظ المباراة تلقائياً في المفضلة باستخدام set للتحقق السريع"""
@@ -3388,35 +3379,6 @@ class ProfessionalFootballApp(MDApp):
         except Exception as e:
             print(f"❌ خطأ في الحفظ التلقائي للمباراة: {e}")
             return False
-
-    def _count_auto_saved_favorites(self):
-        """عد المباريات المحفوظة تلقائياً"""
-        count = 0
-        for match in self.favorites:
-            if match.get('auto_saved_by_filter'):
-                count += 1
-        return count
-
-    def _clear_auto_saved_favorites(self):
-        """حذف جميع المباريات المحفوظة تلقائياً"""
-        try:
-            original_count = len(self.favorites)
-            self.favorites = [match for match in self.favorites if not match.get('auto_saved_by_filter')]
-            removed_count = original_count - len(self.favorites)
-            
-            if removed_count > 0:
-                self.save_favorites()
-                self.show_snackbar(f"✅ تم حذف {removed_count} مباراة محفوظة تلقائياً", duration=4)
-                
-                # تحديث الواجهة إذا كان في تبويب المفضلة
-                if self.current_tab == 'favorites':
-                    Clock.schedule_once(lambda dt: self.show_favorites(), 0.5)
-            else:
-                self.show_snackbar("⚠️ لا توجد مباريات محفوظة تلقائياً", duration=3)
-                
-        except Exception as e:
-            print(f"❌ خطأ في حذف المباريات المحفوظة تلقائياً: {e}")
-            self.show_snackbar("❌ فشل حذف المباريات المحفوظة تلقائياً", duration=4)
 
     def _get_team_goals_for_filter_with_cache(self, team_id, league_id, season, is_home_team, match_date=None):
         """جلب الأهداف للفلتر مع استخدام الكاش المحسن"""
@@ -3857,6 +3819,7 @@ class ProfessionalFootballApp(MDApp):
 
     @mainthread
     def display_calendar_matches_improved(self, matches, target_date):
+        """عرض المباريات المجدولة مع تطبيق الفلترات بالدفعات"""
         container = self.root.ids.main_list
         container.clear_widgets()
         
@@ -3902,27 +3865,44 @@ class ProfessionalFootballApp(MDApp):
             else:
                 filtered_matches = unique_matches
 
-            # تطبيق الفلترات مع استخدام set للإحصائيات
+            # تطبيق الفلترات بالدفعات
+            batch_size = 600
+            total_matches = len(filtered_matches)
+            
             if self.filter_ns_perfect_1_1_enabled:
-                print(f"🎯 تطبيق فلتر NS Perfect 1_1 على {len(filtered_matches)} مباراة")
-                temp_filtered = []
-                for match in filtered_matches:
-                    if match.get('status') in ['NS', 'TBD']:
-                        filter_result = self.filter_ns_perfect_1_1(match)
-                        if "✅ yes" in filter_result:
-                            temp_filtered.append(match)
-                filtered_matches = temp_filtered
+                print(f"🎯 تطبيق فلتر NS Perfect 1_1 على {len(filtered_matches)} مباراة بالدفعات (كل دفعة {batch_size})")
+                
+                filtered_by_1_1 = []
+                for i in range(0, total_matches, batch_size):
+                    batch = filtered_matches[i:i + batch_size]
+                    print(f"🔍 معالجة دفعة {i//batch_size + 1}: {len(batch)} مباراة")
+                    
+                    batch_filtered = self.filter_ns_perfect_1_1_batch(batch)
+                    filtered_by_1_1.extend(batch_filtered)
+                    
+                    # تحديث الواجهة بين الدفعات
+                    Clock.schedule_once(lambda dt, progress=((i + len(batch)) / total_matches * 100): 
+                        self.show_loading(f"Filtering NS Perfect 1_1... {int(progress)}%", progress), 0)
+                
+                filtered_matches = filtered_by_1_1
                 print(f"🎯 بعد تطبيق فلتر NS Perfect 1_1: {len(filtered_matches)} مباراة")
             
             if self.filter_ns_perfect_2_2_enabled:
-                print(f"🎯 تطبيق فلتر NS Perfect 2_2 على {len(filtered_matches)} مباراة")
-                temp_filtered = []
-                for match in filtered_matches:
-                    if match.get('status') in ['NS', 'TBD']:
-                        filter_result = self.filter_ns_perfect_2_2(match)
-                        if "✅ yes" in filter_result:
-                            temp_filtered.append(match)
-                filtered_matches = temp_filtered
+                print(f"🎯 تطبيق فلتر NS Perfect 2_2 على {len(filtered_matches)} مباراة بالدفعات (كل دفعة {batch_size})")
+                
+                filtered_by_2_2 = []
+                for i in range(0, len(filtered_matches), batch_size):
+                    batch = filtered_matches[i:i + batch_size]
+                    print(f"🔍 معالجة دفعة {i//batch_size + 1}: {len(batch)} مباراة")
+                    
+                    batch_filtered = self.filter_ns_perfect_2_2_batch(batch)
+                    filtered_by_2_2.extend(batch_filtered)
+                    
+                    # تحديث الواجهة بين الدفعات
+                    Clock.schedule_once(lambda dt, progress=((i + len(batch)) / total_matches * 100): 
+                        self.show_loading(f"Filtering NS Perfect 2_2... {int(progress)}%", progress), 0)
+                
+                filtered_matches = filtered_by_2_2
                 print(f"🎯 بعد تطبيق فلتر NS Perfect 2_2: {len(filtered_matches)} مباراة")
             
             final_matches = self.filter_out_hidden_and_favorite_matches(filtered_matches)
@@ -3931,9 +3911,9 @@ class ProfessionalFootballApp(MDApp):
             if final_matches:
                 filter_info = []
                 if self.filter_ns_perfect_1_1_enabled:
-                    filter_info.append("NS Perfect 1_1 (API)")
+                    filter_info.append("NS Perfect 1_1 (Batch)")
                 if self.filter_ns_perfect_2_2_enabled:
-                    filter_info.append("NS Perfect 2_2 (API)")
+                    filter_info.append("NS Perfect 2_2 (Batch)")
                 
                 if filter_info:
                     filter_label = MDLabel(
@@ -3973,9 +3953,9 @@ class ProfessionalFootballApp(MDApp):
                     no_matches_text += " with current league"
                 filter_texts = []
                 if self.filter_ns_perfect_1_1_enabled:
-                    filter_texts.append("NS Perfect 1_1 (API)")
+                    filter_texts.append("NS Perfect 1_1 (Batch)")
                 if self.filter_ns_perfect_2_2_enabled:
-                    filter_texts.append("NS Perfect 2_2 (API)")
+                    filter_texts.append("NS Perfect 2_2 (Batch)")
                 if filter_texts:
                     no_matches_text += f": {' + '.join(filter_texts)}"
                 self.show_empty_message(no_matches_text)
