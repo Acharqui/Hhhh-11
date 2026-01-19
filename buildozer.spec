@@ -1,10 +1,10 @@
 [app]
 
 # (str) Title of your application
-title = livescore
+title = statescore
 
 # (str) Package name
-package.name = livescore
+package.name = state
 
 # (str) Package domain (needed for android/ios packaging)
 package.domain = org.chaib12200
