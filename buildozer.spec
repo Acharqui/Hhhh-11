@@ -1,13 +1,13 @@
 [app]
 
 # (str) Title of your application
-title = livescore
+title = statescore
 
 # (str) Package name
-package.name = livescore
+package.name = state
 
 # (str) Package domain (needed for android/ios packaging)
-package.domain = org.chaib11100
+package.domain = org.chaib12200
 
 # (str) Source code where the main.py live
 source.dir = .
