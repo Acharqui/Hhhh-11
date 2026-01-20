@@ -2521,19 +2521,33 @@ class ProfessionalFootballApp(MDApp):
             return False
 
     def _fetch_last_season_standings_with_cache(self, team_id, league_id, season):
-        """جلب ترتيب الموسم الماضي من الكاش"""
+        """جلب ترتيب الموسم الماضي من الكاش الدائم (الدوري بالكامل) مع البحث في الدوريات الأخرى"""
         try:
+            # 1. إذا كان الموسم الحالي، ابحث في جدول الموسم الحالي
             if not season:
                 season = datetime.now().year
-            
-            cached_league_data = self.storage.load_last_season_standings_from_cache(league_id, season)
-            
+                cached_league_data = self.storage.load_league_standings_from_cache(league_id, season)
+            else:  # الموسم الماضي
+                # 2. ابحث أولاً في نفس الدوري للموسم الماضي
+                cached_league_data = self.storage.load_last_season_standings_from_cache(league_id, season)
+                
             if cached_league_data:
+                # البحث عن الفريق المطلوب في بيانات الدوري المخزنة
                 for team_data in cached_league_data:
                     if team_data.get('team_id') == team_id:
                         return team_data
             
-            print(f"🌐 جلب جميع فرق الدوري {league_id} للموسم {season} لحفظها في كاش الموسم الماضي")
+            # 3. إذا لم يتم العثور على الفريق في نفس الدوري، ابحث في جميع كاش الموسم الماضي حسب team_id
+            print(f"🔍 البحث عن الفريق {team_id} في دوريات أخرى للموسم {season}")
+            
+            # محاولة البحث في قاعدة بيانات كاش الموسم الماضي حسب team_id
+            last_season_data = self._find_team_in_last_season_cache_by_id(team_id, season)
+            if last_season_data:
+                print(f"✅ تم العثور على الفريق {team_id} في دوري آخر: {last_season_data.get('league_name')}")
+                return last_season_data
+            
+            # 4. إذا لم يكن الدوري في الكاش، جلب الدوري بالكامل من API
+            print(f"🌐 جلب جميع فرق الدوري {league_id} للموسم {season}")
             all_league_teams = self._fetch_all_league_teams_last_season(league_id, season)
             
             if all_league_teams:
