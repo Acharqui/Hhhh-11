@@ -1,13 +1,13 @@
 [app]
 
 # (str) Title of your application
-title = statescore
+title = livescore
 
 # (str) Package name
-package.name = state
+package.name = livescore
 
 # (str) Package domain (needed for android/ios packaging)
-package.domain = org.chaib12200
+package.domain = org.chaib11100
 
 # (str) Source code where the main.py live
 source.dir = .
@@ -297,7 +297,7 @@ log_level = 2
 warn_on_root = 1
 
 # إعدادات التوقيع
-android.signing.keyalias = chaib12200
-android.signing.keypassword = chaib12200
-android.signing.storepass = chaib12200
+android.signing.keyalias = chaib11100
+android.signing.keypassword = chaib11100
+android.signing.storepass = chaib11100
 android.signing.storefile = my-release-key.keystore
