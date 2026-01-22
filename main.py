@@ -1780,7 +1780,6 @@ class ProfessionalFootballApp(MDApp):
     current_calendar_date = None
     calendar_mode = BooleanProperty(False)
     
-    filter_ns_perfect_2_2_enabled = BooleanProperty(False)
     filter_ns_perfect_1_1_enabled = BooleanProperty(False)
     
     leagues_per_batch = NumericProperty(10)
@@ -2165,7 +2164,7 @@ class ProfessionalFootballApp(MDApp):
             else:
                 print("⚠️ لا دوريات مختارة للكاش، سيتم تخطي الكاش")
 
-            if self.filter_ns_perfect_2_2_enabled or self.filter_ns_perfect_1_1_enabled:
+            if self.filter_ns_perfect_1_1_enabled:
                 print("🚫 الفلتر active - استخدام الكاش فقط مع حذف المباريات المخفية أولًا")
 
                 non_hidden_matches = self.filter_out_hidden_matches_immediately(all_cached_matches)
@@ -2277,110 +2276,78 @@ class ProfessionalFootballApp(MDApp):
         return filtered
 
     def load_filter_state(self):
-        self.filter_ns_perfect_2_2_enabled = self.storage.load_filter_state('filter_ns_perfect_2_2_enabled')
         self.filter_ns_perfect_1_1_enabled = self.storage.load_filter_state('filter_ns_perfect_1_1_enabled')
             
     def save_filter_state(self):
-        self.storage.save_filter_state('filter_ns_perfect_2_2_enabled', self.filter_ns_perfect_2_2_enabled)
         self.storage.save_filter_state('filter_ns_perfect_1_1_enabled', self.filter_ns_perfect_1_1_enabled)
 
-    def filter_ns_perfect_2_2(self, match_data):
-        """فلتر NS Perfect 2_2 المحسّن"""
-        try:
-            match_id = match_data.get('id')
-            home_team_id = match_data.get('home_team_id')
-            away_team_id = match_data.get('away_team_id')
-            league_id = match_data.get('league_id')
-            season = match_data.get('season')
-            
-            if not season:
-                season = datetime.now().year
-            
-            # ⭐ استخدام الكاش المحسن
-            time_str = match_data.get('time', '')
-            match_date = ""
-            if time_str:
-                try:
-                    dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-                    match_date = dt.strftime('%Y-%m-%d')
-                except:
-                    match_date = datetime.now().strftime('%Y-%m-%d')
-            
-            home_result = self._get_team_goals_for_filter_with_cache(
-                home_team_id, league_id, season, True, match_date
-            )
-            away_result = self._get_team_goals_for_filter_with_cache(
-                away_team_id, league_id, season, False, match_date
-            )
-            
-            if home_result[0] is None or away_result[0] is None:
-                return "✅ yes (Incomplete match data)"
-                
-            home_goals, home_count = home_result
-            away_goals, away_count = away_result
-            
-            if home_count < 3 or away_count < 3:
-                return "✅ yes (Not enough matches)"
-                
-            status = match_data.get('status', 'NS')
-            if status not in ['NS', 'TBD']:
-                return "❌ no (Match already started)"
-                
-            try:
-                home_goals_int = int(home_goals)
-                away_goals_int = int(away_goals)
-            except (ValueError, TypeError):
-                return "❌ no (Invalid goals data)"
-                
-        except Exception as e:
-            print(f"NS Perfect 2_2 Filter Error: {e}")
-            return "❌ no (System Error)"
-        
-        return "❌ no"
     def filter_ns_perfect_1_1(self, match_data):
-        """فلتر NS Perfect 1_1"""
+        """
+        فلتر NS Perfect 1_1 بنظام النقاط:
+        1. شرط الدوري: يجب أن يكون الدوري الحالي مختلفاً عن دوري الموسم الماضي (+1).
+        2. شرط الرتبة: الترتيب يجب ألا يكون 90 (+1).
+        """
         try:
-
+            conditions_score = 0
+            total_score_needed = 2  # مجموع النقاط المطلوبة ليصبح المبارة مقبولة
             
             league_id = match_data.get('league_id')
+            current_league_id = league_id
             season = match_data.get('season')
-            
-            if not season:
-                season = datetime.now().year
-            
-            try:
-                season = int(season)
-                last_season = season - 1
-            except:
-                return "❌ no (Invalid season format)"
-
             home_team_id = match_data.get('home_team_id')
             away_team_id = match_data.get('away_team_id')
-            
-            print(f"🔍 فلتر NS Perfect 1_1: الدوري {league_id}, الموسم {season}, الموسم الماضي {last_season}")
 
+            # تحديد الموسم الماضي
+            try:
+                        season = int(season)
+                        last_season = season - 1
+            except:
+                return "❌ no (Invalid season)"
+
+            # جلب بيانات الفريقين للموسم الماضي من الكاش
             home_last_data = self._fetch_last_season_standings_with_cache(home_team_id, league_id, last_season)
             away_last_data = self._fetch_last_season_standings_with_cache(away_team_id, league_id, last_season)
-            
-            print(f"🏠 ترتيب الماضي للفريق المنزل: {home_last_data}")
-            print(f"✈️ ترتيب الماضي للفريق الضيف: {away_last_data}")
-            
-            if not home_last_data or not away_last_data:
-                return "✅ yes (Missing last season data)"
 
-            home_last_league = home_last_data.get('league_id')
-            away_last_league = away_last_data.get('league_id')
-            
-            print(f"📌 الدوريات: Home:{home_last_league}, Away:{away_last_league}")
-            
-            if home_last_league == league_id and away_last_league == league_id:
-                return "❌ no (Same league last season)"
-            
-            return "✅ yes (Different league last season)"
-                
+            # استخراج القيم
+            home_last_rank = home_last_data.get('current_rank') if home_last_data else None
+            away_last_rank = away_last_data.get('current_rank') if away_last_data else None
+            home_last_league_id = home_last_data.get('league_id') if home_last_data else None
+            away_last_league_id = away_last_data.get('league_id') if away_last_data else None
+
+            # --- الشرط الأول: الدوري مختلف ---
+            if (home_last_league_id and home_last_league_id != current_league_id) or \
+               (away_last_league_id and away_last_league_id != current_league_id):
+                conditions_score += 1
+                print(f"✅ الشرط 1 تحقق: الدوري مختلف (+1)")
+            else:
+                print(f"❌ الشرط 1 فشل: الدوري متطابق")
+
+            # --- الشرط الثاني: الترتيب ≠ 90 فقط ---
+            try:
+                home_rank_val = int(home_last_rank)
+                away_rank_val = int(away_last_rank)
+            except:
+                print(f"❌ الشرط 2 فشل: ترتيب غير رقمي ({home_last_rank} أو {away_last_rank})")
+            else:
+                if (
+                    home_rank_val in (80, 90) or away_rank_val in (80, 90)
+                ):
+                    print(f"❌ الشرط 2 فشل: ترتيب 90 مرفوض ({home_rank_val} أو {away_rank_val})")
+                else:
+                    conditions_score += 1
+                    print(f"✅ الشرط 2 تحقق: ترتيب مقبول (+1)")
+
+            # --- النتيجة النهائية ---
+            if conditions_score == total_score_needed:
+                print(f"🚀 المباراة مقبولة: {conditions_score}/{total_score_needed}")
+                return f"✅ yes (PERFECT {conditions_score}/{total_score_needed}- PREDICTION)"
+            else:
+                print(f"⚠️ المباراة مرفوضة: {conditions_score}/{total_score_needed}")
+                return f"❌ no ({conditions_score}/{total_score_needed} points)"
+
         except Exception as e:
-            print(f"❌ ERROR in filter_ns_perfect_1_1: {e} for match {match_data.get('id')}")
-            return f"❌ no (Error: {str(e)[:50]})"
+            print(f"❌ Error in perfect filter: {e}")
+            return "❌ no (Error)"
             
     def _get_team_goals_for_filter_with_cache(self, team_id, league_id, season, is_home_team, match_date=None):
         """جلب الأهداف للفلتر مع استخدام الكاش المحسن"""
@@ -2648,13 +2615,6 @@ class ProfessionalFootballApp(MDApp):
     def save_favorite_leagues(self):
         self.storage.save_favorite_leagues(self.favorite_leagues)
 
-    def toggle_filter_ns_perfect_2_2(self):
-        self.filter_ns_perfect_2_2_enabled = not self.filter_ns_perfect_2_2_enabled
-        self.save_filter_state()
-        status = "Enabled" if self.filter_ns_perfect_2_2_enabled else "Disabled"
-        self.show_snackbar(f"NS Filter (Perfect 2_2) is now {status}")
-        self.show_profile()
-
     def toggle_filter_ns_perfect_1_1(self):
         self.filter_ns_perfect_1_1_enabled = not self.filter_ns_perfect_1_1_enabled
         self.save_filter_state()
@@ -2860,17 +2820,6 @@ class ProfessionalFootballApp(MDApp):
 
             final_matches_filtered = []
             
-            if self.filter_ns_perfect_2_2_enabled:
-                print(f"🎯 تطبيق فلتر NS Perfect 2_2 على {len(filtered_matches)} مباراة")
-                temp_filtered = []
-                for match in filtered_matches:
-                    if match.get('status') in ['NS', 'TBD']:
-                        filter_result = self.filter_ns_perfect_2_2(match)
-                        if "✅ yes" in filter_result:
-                            temp_filtered.append(match)
-                filtered_matches = temp_filtered
-                print(f"🎯 بعد تطبيق فلتر NS Perfect 2_2: {len(filtered_matches)} مباراة")
-            
             if self.filter_ns_perfect_1_1_enabled:
                 print(f"🎯 تطبيق فلتر NS Perfect 1_1 على {len(filtered_matches)} مباراة")
                 temp_filtered = []
@@ -2887,8 +2836,6 @@ class ProfessionalFootballApp(MDApp):
             
             if final_matches:
                 filter_info = []
-                if self.filter_ns_perfect_2_2_enabled:
-                    filter_info.append("NS Perfect 2_2 (API)")
                 if self.filter_ns_perfect_1_1_enabled:
                     filter_info.append("NS Perfect 1_1 (API)")
                 
@@ -2929,8 +2876,6 @@ class ProfessionalFootballApp(MDApp):
                 if required_league_ids:
                     no_matches_text += " with current league filters"
                 filter_texts = []
-                if self.filter_ns_perfect_2_2_enabled:
-                    filter_texts.append("NS Perfect 2_2 (API)")
                 if self.filter_ns_perfect_1_1_enabled:
                     filter_texts.append("NS Perfect 1_1 (API)")
                 if filter_texts:
@@ -4013,31 +3958,6 @@ class ProfessionalFootballApp(MDApp):
         
         filter_buttons_box = MDBoxLayout(orientation='vertical', spacing=dp(10), size_hint_y=None, height=dp(320))
         
-        btn_ns_filter = MDBoxLayout(
-            orientation='horizontal',
-            size_hint_y=None,
-            height=dp(40),
-            padding=dp(5),
-            spacing=dp(10)
-        )
-        btn_ns_filter_label = MDLabel(
-            text=" (Nooo__last__3__Goeals)",
-            theme_text_color='Primary',
-            halign='left',
-            valign='center',
-            size_hint_x=0.8
-        )
-        btn_ns_filter_icon = MDIconButton(
-            icon= "checkbox-marked" if self.filter_ns_perfect_2_2_enabled else "checkbox-blank-outline",
-            theme_text_color='Custom',
-            text_color=get_color_from_hex("#4CAF50") if self.filter_ns_perfect_2_2_enabled else get_color_from_hex("#757575"),
-            on_release=lambda x: self.toggle_filter_ns_perfect_2_2(),
-            size_hint_x=0.2
-        )
-        btn_ns_filter.add_widget(btn_ns_filter_label)
-        btn_ns_filter.add_widget(btn_ns_filter_icon)
-        filter_buttons_box.add_widget(btn_ns_filter)
-        
         btn_ns_filter_1_1 = MDBoxLayout(
             orientation='horizontal',
             size_hint_y=None,
@@ -4062,39 +3982,6 @@ class ProfessionalFootballApp(MDApp):
         btn_ns_filter_1_1.add_widget(btn_ns_filter_1_1_label)
         btn_ns_filter_1_1.add_widget(btn_ns_filter_1_1_icon)
         filter_buttons_box.add_widget(btn_ns_filter_1_1)
-        
-        btn_condition1 = MDRaisedButton(
-            text="🔍 Condition 1: One Team Scored/No Goals",
-            on_release=lambda x: self.apply_filter_condition_1(),
-            size_hint_y=None,
-            height=dp(40)
-        )
-        filter_buttons_box.add_widget(btn_condition1)
-        
-        btn_condition2 = MDRaisedButton(
-            text="🎯 Condition 2: Loser Scored More (Last 3)",
-            on_release=lambda x: self.apply_filter_condition_2(),
-            size_hint_y=None,
-            height=dp(40)
-        )
-        filter_buttons_box.add_widget(btn_condition2)
-        
-        btn_combined_1_2 = MDRaisedButton(
-            text="⭐ المطلوب: شرط (1) + شرط (2) ⭐",
-            on_release=lambda x: self.apply_combined_filter_1_and_2(),
-            size_hint_y=None,
-            height=dp(40),
-            md_bg_color=get_color_from_hex("#00A0B0")
-        )
-        filter_buttons_box.add_widget(btn_combined_1_2)
-        
-        btn_reset = MDFlatButton(
-            text="🔄 Reset All Filters",
-            on_release=lambda x: self.reset_all_filters(),
-            size_hint_y=None,
-            height=dp(40)
-        )
-        filter_buttons_box.add_widget(btn_reset)
         
         container.add_widget(filter_buttons_box)
         
@@ -4185,7 +4072,6 @@ class ProfessionalFootballApp(MDApp):
     def reset_all_filters(self):
         """إعادة تعيين جميع الفلترات"""
         self.reset_filter()
-        self.filter_ns_perfect_2_2_enabled = False
         self.filter_ns_perfect_1_1_enabled = False
         
         self.save_filter_state()
@@ -4443,141 +4329,6 @@ class ProfessionalFootballApp(MDApp):
         except Exception as e:
             print(f"Error extracting goals from '{stats_str}': {e}")
             return None, None
-
-    def filter_condition_2(self, match_data):
-        """فلتر الشرط 2 مع استخدام الكاش المحسن"""
-        try:
-            home_team_id = match_data.get('home_team_id')
-            away_team_id = match_data.get('away_team_id')
-            league_id = match_data.get('league_id')
-            season = match_data.get('season')
-            
-            if not season:
-                season = datetime.now().year
-                
-            home_score = match_data.get('home_score', 0)
-            away_score = match_data.get('away_score', 0)
-            status = match_data.get('status', 'NS')
-            
-            time_str = match_data.get('time', '')
-            match_date = ""
-            if time_str:
-                try:
-                    dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-                    match_date = dt.strftime('%Y-%m-%d')
-                except:
-                    match_date = datetime.now().strftime('%Y-%m-%d')
-            
-            scheduled_cache = self.storage.load_scheduled_matches_from_cache(match_date, league_id)
-            
-            if scheduled_cache:
-                match_found = any(
-                    m.get('home_team_id') == home_team_id and 
-                    m.get('away_team_id') == away_team_id 
-                    for m in scheduled_cache
-                )
-                if not match_found:
-                    return "❌ no (المباراة غير مجدولة)"
-            else:
-                return "❌ no (لا يوجد كاش)"
-            
-            if status in ['FT', 'AET', 'PEN']:
-                if home_score == 0 and away_score == 0:
-                    return "❌ no"
-                return "❌ no"
-            
-            if home_score > 0 and away_score > 0:
-                return "❌ no"
-            
-            if status not in ['NS', '1H', '2H', 'HT', 'ET', 'LIVE']:
-                return "❌ no"
-            
-            if status == 'NS':
-                return "✅ yes"
-            
-            if home_score == away_score and status != 'NS': 
-                return "✅ yes"
-            
-            if not home_team_id or not away_team_id or not league_id:
-                return "❌ no"
-            
-            if home_score < away_score:
-                losing_team_id = home_team_id
-                winning_team_id = away_team_id
-                losing_is_home = True
-            else: 
-                losing_team_id = away_team_id
-                winning_team_id = home_team_id
-                losing_is_home = False
-            
-            # ⭐ استخدام الكاش المحسن
-            losing_stats_dict = self.get_team_goals_from_cache(losing_team_id, league_id, season, losing_is_home, match_date)
-            winning_stats_dict = self.get_team_goals_from_cache(winning_team_id, league_id, season, not losing_is_home, match_date)
-            
-            losing_goals_for = losing_stats_dict.get('goals_for', 0) if losing_stats_dict else 0
-            losing_goals_against = losing_stats_dict.get('goals_against', 0) if losing_stats_dict else 0
-            winning_goals_for = winning_stats_dict.get('goals_for', 0) if winning_stats_dict else 0
-            winning_goals_against = winning_stats_dict.get('goals_against', 0) if winning_stats_dict else 0
-            
-            if losing_goals_against > 7:
-                return "❌ no"
-            
-            if (losing_goals_against - winning_goals_against) > 4:
-                return "❌ no"
-            
-            if losing_goals_for >= winning_goals_for:
-                return "✅ yes"
-            
-            return "❌ no"
-            
-        except Exception as e:
-            return "❌ no"
-
-    def combined_filter_condition(self, match_data):
-        condition1_result = self.filter_condition_1(match_data)
-        condition2_result = self.filter_condition_2(match_data)
-        
-        if condition1_result == "✅ yes" and condition2_result == "✅ yes":
-            return "✅ yes"
-        
-        return "❌ no"
-        
-    def filter_condition_combined_1_and_2(self, match_data):
-        condition1_result = self.filter_condition_1(match_data)
-        if condition1_result != "✅ yes":
-            return "❌ no"
-
-        condition2_result = self.filter_condition_2(match_data)
-        
-        if condition2_result == "✅ yes":
-            return "✅ yes"
-        
-        return "❌ no"
-
-    def apply_filter_condition_1(self):
-        self.set_filter_logic(self.filter_condition_1, "One Team Scored/No Goals")
-        self.run_filter_process_threaded()
-        self.show_snackbar("Applied Condition 1: One team scored or no goals")
-
-    def apply_filter_condition_2(self):
-        self.set_filter_logic(self.filter_condition_2, "Loser Scored More (Last 3)")
-        self.run_filter_process_threaded()
-        self.show_snackbar("Applied Condition 2: Losing team scored more in last 3 matches")
-
-    def apply_combined_filter(self):
-        self.set_filter_logic(self.combined_filter_condition, "Combined Filter (1 and 2)")
-        self.run_filter_process_threaded()
-        self.show_snackbar("Applied Combined Filter (Conditions 1 and 2)")
-
-    def apply_combined_filter_1_and_2(self):
-        self.set_filter_logic(self.filter_condition_combined_1_and_2, "Condition 1 + 2")
-        self.run_filter_process_threaded()
-        self.show_snackbar("Applied Combined Filter: One Team Scored/No Goals AND Loser Stats")
-    
-    def apply_combined_filter_on_start(self):
-        self.set_filter_logic(self.filter_condition_combined_1_and_2, "Condition 1 + 2 (Auto)")
-        Clock.schedule_once(lambda dt: self.run_filter_process_threaded(), 0)
-        self.show_snackbar("Auto-Filter Applied: Condition 1 + 2")
 
     def reset_filter_ui(self):
         self.reset_filter()
