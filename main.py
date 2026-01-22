@@ -438,7 +438,7 @@ class SQLiteStorage:
             return False
 
     def load_scheduled_matches_from_cache(self, match_date, league_id):
-        """تحميل المباريات المجدولة من الكاش"""
+        """تحميل المباريات المجدولة من الكاش باستخدام set لتحسين الأداء"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -454,7 +454,21 @@ class SQLiteStorage:
             if row:
                 match_data = json.loads(row[0])
                 print(f"✅ تم تحميل {len(match_data)} مباراة من الكاش")
-                return match_data
+                
+                # استخدام set لإزالة التكرارات السريعة
+                seen_ids = set()
+                unique_matches = []
+                
+                for match in match_data:
+                    match_id = match.get('id')
+                    if match_id and match_id not in seen_ids:
+                        seen_ids.add(match_id)
+                        unique_matches.append(match)
+                
+                if len(unique_matches) < len(match_data):
+                    print(f"✅ تمت إزالة {len(match_data) - len(unique_matches)} مباراة مكررة باستخدام set")
+                
+                return unique_matches
             
             return None
         except Exception as e:
@@ -533,7 +547,7 @@ class SQLiteStorage:
 
     # دوال المباريات المفضلة
     def load_favorites(self):
-        """تحميل المباريات المفضلة"""
+        """تحميل المباريات المفضلة باستخدام set لتحسين الأداء"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -542,14 +556,23 @@ class SQLiteStorage:
             conn.close()
             
             favorites = []
+            seen_ids = set()  # استخدام set للكشف عن التكرارات
+            
             for row in rows:
                 try:
                     match_data = json.loads(row[0])
-                    favorites.append(match_data)
-                except:
-                    pass
+                    match_id = match_data.get('id')
+                    
+                    if match_id and match_id not in seen_ids:
+                        seen_ids.add(match_id)
+                        favorites.append(match_data)
+                except Exception as e:
+                    print(f"❌ خطأ في تحميل مباراة من المفضلة: {e}")
+            
+            print(f"✅ تم تحميل {len(favorites)} مباراة من المفضلة (مجموعة فريدة)")
             return favorites
-        except:
+        except Exception as e:
+            print(f"❌ خطأ في تحميل المفضلة: {e}")
             return []
 
     def save_favorites(self, favorites):
@@ -564,17 +587,18 @@ class SQLiteStorage:
                 try:
                     match_data = json.dumps(match)
                     cursor.execute('INSERT INTO favorites (match_data) VALUES (?)', (match_data,))
-                except:
-                    pass
+                except Exception as e:
+                    print(f"❌ خطأ في حفظ مباراة في المفضلة: {e}")
             
             conn.commit()
             conn.close()
-        except:
-            pass
+            print(f"✅ تم حفظ {len(favorites)} مباراة في المفضلة")
+        except Exception as e:
+            print(f"❌ خطأ في حفظ المفضلة: {e}")
 
     # دوال المباريات المخفية
     def load_hidden_matches(self):
-        """تحميل المباريات المخفية"""
+        """تحميل المباريات المخفية باستخدام set لتحسين الأداء"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -583,14 +607,23 @@ class SQLiteStorage:
             conn.close()
             
             hidden_matches = []
+            seen_ids = set()  # استخدام set للكشف عن التكرارات
+            
             for row in rows:
                 try:
                     match_data = json.loads(row[0])
-                    hidden_matches.append(match_data)
-                except:
-                    pass
+                    match_id = match_data.get('id')
+                    
+                    if match_id and match_id not in seen_ids:
+                        seen_ids.add(match_id)
+                        hidden_matches.append(match_data)
+                except Exception as e:
+                    print(f"❌ خطأ في تحميل مباراة مخفية: {e}")
+            
+            print(f"✅ تم تحميل {len(hidden_matches)} مباراة مخفية (مجموعة فريدة)")
             return hidden_matches
-        except:
+        except Exception as e:
+            print(f"❌ خطأ في تحميل المباريات المخفية: {e}")
             return []
 
     def save_hidden_matches(self, hidden_matches):
@@ -1781,6 +1814,7 @@ class ProfessionalFootballApp(MDApp):
     calendar_mode = BooleanProperty(False)
     
     filter_ns_perfect_1_1_enabled = BooleanProperty(False)
+    filter_ns_perfect_2_2_enabled = BooleanProperty(False)
     
     leagues_per_batch = NumericProperty(10)
     current_leagues_batch = NumericProperty(0)
@@ -2147,7 +2181,7 @@ class ProfessionalFootballApp(MDApp):
             return None
 
     def fetch_matches_by_date_improved(self, target_date):
-        """جلب المباريات: الكاش حسب الدوريات المختارة"""
+        """جلب المباريات: الكاش حسب الدوريات المختارة باستخدام set"""
         try:
             date_str = target_date.strftime('%Y-%m-%d')
             print(f"🔍 جاري البحث عن المباريات للتاريخ: {date_str}")
@@ -2156,29 +2190,35 @@ class ProfessionalFootballApp(MDApp):
             all_cached_matches = []
 
             if required_league_ids:
+                # استخدام set لجمع المباريات
+                all_matches_set = set()
+                
                 for league_id in required_league_ids:
                     cached = self.storage.load_scheduled_matches_from_cache(date_str, league_id)
                     if cached:
-                        all_cached_matches.extend(cached)
-                        print(f"✅ تم تحميل {len(cached)} مباراة من الكاش للدوري {league_id}")
+                        # إضافة المباريات إلى set باستخدام معرف المباراة
+                        for match in cached:
+                            match_id = match.get('id')
+                            if match_id:
+                                all_matches_set.add((match_id, json.dumps(match, sort_keys=True)))
+                
+                # تحويل set إلى قائمة
+                all_cached_matches = []
+                for match_id, match_json in all_matches_set:
+                    all_cached_matches.append(json.loads(match_json))
+                    
+                print(f"✅ تم تحميل {len(all_cached_matches)} مباراة من الكاش ({len(required_league_ids)} دوري)")
             else:
                 print("⚠️ لا دوريات مختارة للكاش، سيتم تخطي الكاش")
 
-            if self.filter_ns_perfect_1_1_enabled:
-                print("🚫 الفلتر active - استخدام الكاش فقط مع حذف المباريات المخفية أولًا")
+            if self.filter_ns_perfect_1_1_enabled or self.filter_ns_perfect_2_2_enabled:
+                print("🚫 الفلتر active - استخدام الكاش فقط مع حذف المباريات المخفية والمفضلة أولًا")
 
-                non_hidden_matches = self.filter_out_hidden_matches_immediately(all_cached_matches)
+                # فلترة المباريات المخفية والمفضلة قبل أي فلترة أخرى
+                non_hidden_and_favorites_removed = self.filter_out_hidden_and_favorite_matches(all_cached_matches)
 
-                unique_matches = []
-                seen_ids = set()
-                for match in non_hidden_matches:
-                    match_id = match.get('id')
-                    if match_id and match_id not in seen_ids:
-                        seen_ids.add(match_id)
-                        unique_matches.append(match)
-
-                print(f"📊 النتيجة من الكاش بعد حذف المخفية: {len(unique_matches)} مباراة")
-                return unique_matches
+                print(f"📊 النتيجة من الكاش بعد حذف المخفية والمفضلة: {len(non_hidden_and_favorites_removed)} مباراة")
+                return non_hidden_and_favorites_removed
 
             print("🌐 تحميل جميع المباريات مرة واحدة من API...")
             url = f"{self.base_url}/fixtures"
@@ -2186,12 +2226,14 @@ class ProfessionalFootballApp(MDApp):
 
             response = self.fetch_with_retry(url, params, max_retries=2)
             matches_from_api = []
+            
             if response and response.status_code == 200:
                 data = response.json()
                 if data.get('response'):
                     api_matches = self.process_api_response_improved(data['response'])
                     matches_from_api = api_matches
 
+                    # تجميع المباريات حسب الدوري وحفظها في الكاش
                     matches_by_league = {}
                     for match in api_matches:
                         league_id = match.get('league_id')
@@ -2203,17 +2245,24 @@ class ProfessionalFootballApp(MDApp):
                     for league_id, league_matches in matches_by_league.items():
                         self.storage.save_scheduled_matches_to_cache(date_str, league_id, league_matches)
 
+            # دمج المباريات مع إزالة التكرارات باستخدام set
             all_matches = all_cached_matches + matches_from_api
-
-            unique_matches = []
+            
             seen_ids = set()
+            unique_matches = []
+            
             for match in all_matches:
                 match_id = match.get('id')
                 if match_id and match_id not in seen_ids:
                     seen_ids.add(match_id)
                     unique_matches.append(match)
 
-            unique_matches = self.filter_out_hidden_matches_immediately(unique_matches)
+            # فلترة المباريات المخفية باستخدام set
+            hidden_ids = {m.get('id') for m in self.hidden_matches}
+            unique_matches = [
+                match for match in unique_matches 
+                if match.get('id') not in hidden_ids
+            ]
 
             print(f"📊 النتيجة النهائية: {len(unique_matches)} مباراة ({len(all_cached_matches)} من الكاش، {len(matches_from_api)} من API)")
 
@@ -2227,9 +2276,11 @@ class ProfessionalFootballApp(MDApp):
             return []
 
     def filter_out_hidden_matches_immediately(self, matches_list):
+        """فلترة المباريات المخفية باستخدام set لتحسين الأداء"""
         if not matches_list:
             return []
-            
+        
+        # استخدام set للكشف السريع عن المباريات المخفية
         hidden_ids = {m.get('id') for m in self.hidden_matches}
         
         filtered = []
@@ -2250,6 +2301,7 @@ class ProfessionalFootballApp(MDApp):
         return filtered
 
     def filter_out_hidden_and_favorite_matches(self, matches_list):
+
         hidden_ids = {m.get('id') for m in self.hidden_matches}
         favorite_ids = {f.get('id') for f in self.favorites}
         
@@ -2277,78 +2329,1424 @@ class ProfessionalFootballApp(MDApp):
 
     def load_filter_state(self):
         self.filter_ns_perfect_1_1_enabled = self.storage.load_filter_state('filter_ns_perfect_1_1_enabled')
+        self.filter_ns_perfect_2_2_enabled = self.storage.load_filter_state('filter_ns_perfect_2_2_enabled')
             
     def save_filter_state(self):
         self.storage.save_filter_state('filter_ns_perfect_1_1_enabled', self.filter_ns_perfect_1_1_enabled)
+        self.storage.save_filter_state('filter_ns_perfect_2_2_enabled', self.filter_ns_perfect_2_2_enabled)
 
-    def filter_ns_perfect_1_1(self, match_data):
-        """
-        فلتر NS Perfect 1_1 بنظام النقاط:
-        1. شرط الدوري: يجب أن يكون الدوري الحالي مختلفاً عن دوري الموسم الماضي (+1).
-        2. شرط الرتبة: الترتيب يجب ألا يكون 90 (+1).
-        """
+    def filter_ns_perfect_1_1_batch(self, matches_batch):
+        """فلتر perfect 1_1 مع التحقق من ترتيب الموسم الماضي وحفظ في favorites"""
         try:
-            conditions_score = 0
-            total_score_needed = 2  # مجموع النقاط المطلوبة ليصبح المبارة مقبولة
+            filtered_matches = []
             
-            league_id = match_data.get('league_id')
-            current_league_id = league_id
-            season = match_data.get('season')
-            home_team_id = match_data.get('home_team_id')
-            away_team_id = match_data.get('away_team_id')
-
-            # تحديد الموسم الماضي
-            try:
+            for match_data in matches_batch:
+                try:
+                    match_id = match_data.get('id')
+                    home_team_id = match_data.get('home_team_id')
+                    away_team_id = match_data.get('away_team_id')
+                    league_id = match_data.get('league_id')
+                    season = match_data.get('season')
+                    
+                    if not season:
+                        season = datetime.now().year
+                    
+                    try:
                         season = int(season)
                         last_season = season - 1
-            except:
-                return "❌ no (Invalid season)"
+                    except:
+                        filtered_matches.append(match_data)
+                        self._auto_save_to_favorites_if_not_exists(
+                            match_data,
+                            "perfect_1_1",
+                            "Invalid season format"
+                        )
+                        continue
 
-            # جلب بيانات الفريقين للموسم الماضي من الكاش
-            home_last_data = self._fetch_last_season_standings_with_cache(home_team_id, league_id, last_season)
-            away_last_data = self._fetch_last_season_standings_with_cache(away_team_id, league_id, last_season)
+                    # ===== جلب ترتيب الموسم الماضي =====
+                    home_last_data = self._fetch_last_season_standings_with_cache(home_team_id, league_id, last_season)
+                    away_last_data = self._fetch_last_season_standings_with_cache(away_team_id, league_id, last_season)
+                    
+                    home_last_rank = home_last_data.get('current_rank', 'N/A') if home_last_data else 'N/A'
+                    away_last_rank = away_last_data.get('current_rank', 'N/A') if away_last_data else 'N/A'
+                    
+                    # إذا كان أي فريق جديد أو غير موجود في الموسم الماضي، نعتبره مقبولًا
+                    if home_last_rank in ("N/A", "NEW") or away_last_rank in ("N/A", "NEW"):
+                        filtered_matches.append(match_data)
+                        self._auto_save_to_favorites_if_not_exists(
+                            match_data,
+                            "perfect_1_1",
+                            "New or missing in last season"
+                        )
+                        continue
 
-            # استخراج القيم
-            home_last_rank = home_last_data.get('current_rank') if home_last_data else None
-            away_last_rank = away_last_data.get('current_rank') if away_last_data else None
-            home_last_league_id = home_last_data.get('league_id') if home_last_data else None
-            away_last_league_id = away_last_data.get('league_id') if away_last_data else None
-
-            # --- الشرط الأول: الدوري مختلف ---
-            if (home_last_league_id and home_last_league_id != current_league_id) or \
-               (away_last_league_id and away_last_league_id != current_league_id):
-                conditions_score += 1
-                print(f"✅ الشرط 1 تحقق: الدوري مختلف (+1)")
-            else:
-                print(f"❌ الشرط 1 فشل: الدوري متطابق")
-
-            # --- الشرط الثاني: الترتيب ≠ 90 فقط ---
-            try:
-                home_rank_val = int(home_last_rank)
-                away_rank_val = int(away_last_rank)
-            except:
-                print(f"❌ الشرط 2 فشل: ترتيب غير رقمي ({home_last_rank} أو {away_last_rank})")
-            else:
-                if (
-                    home_rank_val in (80, 90) or away_rank_val in (80, 90)
-                ):
-                    print(f"❌ الشرط 2 فشل: ترتيب 90 مرفوض ({home_rank_val} أو {away_rank_val})")
-                else:
-                    conditions_score += 1
-                    print(f"✅ الشرط 2 تحقق: ترتيب مقبول (+1)")
-
-            # --- النتيجة النهائية ---
-            if conditions_score == total_score_needed:
-                print(f"🚀 المباراة مقبولة: {conditions_score}/{total_score_needed}")
-                return f"✅ yes (PERFECT {conditions_score}/{total_score_needed}- PREDICTION)"
-            else:
-                print(f"⚠️ المباراة مرفوضة: {conditions_score}/{total_score_needed}")
-                return f"❌ no ({conditions_score}/{total_score_needed} points)"
-
-        except Exception as e:
-            print(f"❌ Error in perfect filter: {e}")
-            return "❌ no (Error)"
+                    # ===== الشروط الأساسية للفلتر =====
+                    status = match_data.get('status', 'NS')
+                    if status not in ['NS', 'TBD']:
+                        continue
+                    
+                    time_str = match_data.get('time', '')
+                    match_date = ""
+                    if time_str:
+                        try:
+                            dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                            match_date = dt.strftime('%Y-%m-%d')
+                        except:
+                            match_date = datetime.now().strftime('%Y-%m-%d')
+                    
+                    home_result = self._get_team_goals_for_filter_with_cache(
+                        home_team_id, league_id, season, True, match_date
+                    )
+                    away_result = self._get_team_goals_for_filter_with_cache(
+                        away_team_id, league_id, season, False, match_date
+                    )
+                    
+                    if home_result[0] is None or away_result[0] is None:
+                        filtered_matches.append(match_data)
+                        self._auto_save_to_favorites_if_not_exists(
+                            match_data,
+                            "perfect_1_1",
+                            "Incomplete match data"
+                        )
+                        continue
+                        
+                    home_goals, home_count = home_result
+                    away_goals, away_count = away_result
+                    
+                    if home_count < 3 or away_count < 3:
+                        filtered_matches.append(match_data)
+                        self._auto_save_to_favorites_if_not_exists(
+                            match_data,
+                            "perfect_1_1",
+                            "Not enough matches"
+                        )
+                        continue
+                    
+                    try:
+                        home_goals_int = int(home_goals)
+                        away_goals_int = int(away_goals)
+                    except (ValueError, TypeError):
+                        continue
+                    
+                except Exception as e:
+                    print(f"perfect 1_1 error for match {match_data.get('id')}: {e}")
+                    continue
             
+            return filtered_matches
+            
+        except Exception as e:
+            print(f"❌ خطأ في filter_ns_perfect_1_1_batch: {e}")
+            return []
+
+    def filter_ns_perfect_2_2_batch(self, matches_batch):
+
+        try:
+            filtered_matches = []
+            forbidden_groups = [
+                {
+                    'current_rank': {(1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (2, 10), (2, 11), (2, 12), (3, 10), (3, 11), (3, 12), (4, 10), (4, 11), (4, 12), (4, 13)},
+                    'last_season': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (2, 10), (3, 10), (4, 10), (4, 11), (4, 12)},
+                    'goals_condition': {(1, 1), (1, 2), (1, 3)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (4, 0), (4, 1), (4, 2), (4, 3), (5, 0), (5, 1), (5, 2), (5, 3), (6, 0), (6, 1), (6, 2), (6, 3), (7, 2), (7, 3)}
+                },
+                {
+                    'current_rank': {(1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'last_season': {(1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'goals_condition': {(2, 2), (2, 3), (2, 4), (2, 5), (2, 6)},  
+                    'goals_latest': {(3, 0), (3, 1), (4, 0), (4, 1), (4, 2), (4, 3), (5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(1, 7), (1, 8), (1, 9), (2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'last_season': {(1, 7), (1, 8), (1, 9), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'goals_condition': {(2, 7), (2, 8), (2, 9)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (4, 5), (4, 6), (4, 7), (5, 2), (5, 3), (5, 4), (5, 5), (5, 6), (5, 7), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (6, 7), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'last_season': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (3, 10), (3, 11), (3, 12), (4, 10), (4, 11), (4, 12)},
+                    'goals_condition': {(3, 1), (3, 2), (3, 3)},
+                    'goals_latest': {(4, 0), (4, 1), (4, 2), (5, 0), (5, 1), (5, 2), (5, 3), (6, 0), (6, 1), (6, 2), (6, 3), (7, 0), (7, 1), (7, 2), (7, 3), (8, 1), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'last_season': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (3, 10), (3, 11), (3, 12), (4, 10), (4, 11), (4, 12)},
+                    'goals_condition': {(3, 4)},
+                    'goals_latest': {(4, 0), (4, 1), (4, 2), (4, 3), (5, 0), (5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (6, 5), (7, 1), (7, 2), (7, 3), (7, 4), (7, 5), (8, 1), (8, 2), (8, 3), (8, 4), (8, 5), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (2, 10), (2, 11), (3, 10), (3, 11), (4, 10), (4, 11)},
+                    'last_season': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (2, 10), (2, 11), (3, 10), (3, 11), (4, 10), (4, 11)},
+                    'goals_condition': {(3, 5)},
+                    'goals_latest': {(4, 0), (4, 1), (4, 2), (5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (2, 10), (2, 11), (3, 10), (3, 11), (4, 10), (4, 11)},
+                    'last_season': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (2, 10), (2, 11), (3, 10), (3, 11), (4, 10), (4, 11)},
+                    'goals_condition': {(3, 6)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (4, 5), (5, 2), (5, 3), (5, 4), (5, 5), (5, 6), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(2, 6), (2, 7), (2, 8), (2, 9), (3, 6), (3, 7), (3, 8), (3, 9), (4, 6), (4, 7), (4, 8), (4, 9), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'last_season': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'goals_condition': {(3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(4, 3), (4, 4), (4, 5), (5, 3), (5, 4), (5, 5), (5, 6), (6, 3), (6, 4), (6, 5), (6, 6), (7, 3), (7, 4), (7, 5), (7, 6), (8, 3), (8, 4), (8, 5), (8, 6), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (4, 5), (4, 6), (4, 7), (4, 8)},
+                    'last_season': {(1, 5), (1, 6), (1, 7), (1, 8), (2, 5), (2, 6), (2, 7), (2, 8), (3, 5), (3, 6), (3, 7), (3, 8), (4, 5), (4, 6), (4, 7), (4, 8)},
+                    'goals_condition': {(4, 0), (4, 1), (4, 2)},
+                    'goals_latest': {(6, 0), (6, 1), (6, 2), (6, 3), (7, 1), (7, 2), (7, 3), (8, 1), (8, 2), (8, 3), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (4, 5), (4, 6), (4, 7), (4, 8)},
+                    'last_season': {(1, 5), (1, 6), (1, 7), (1, 8), (2, 5), (2, 6), (2, 7), (2, 8), (3, 5), (3, 6), (3, 7), (3, 8), (4, 5), (4, 6), (4, 7), (4, 8)},
+                    'goals_condition': {(4, 3), (4, 4)},
+                    'goals_latest': {(5, 1), (5, 2), (6, 1), (6, 2), (6, 3), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (8, 5), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (4, 5), (4, 6), (4, 7), (4, 8)},
+                    'last_season': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9)},
+                    'goals_condition': {(4, 5), (4, 6), (4, 7), (4, 8), (4, 9)},
+                    'goals_latest': {(7, 3), (7, 4), (7, 5), (7, 6), (8, 3), (8, 4), (8, 5), (8, 6), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (3, 10), (3, 11), (3, 12), (4, 10), (4, 11), (4, 12)},
+                    'last_season': {(1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'goals_condition': {(5, 1)},
+                    'goals_latest': {(9, 1), (9, 2)}
+                },
+                {
+                    'current_rank': {(1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (3, 10), (3, 11), (3, 12), (4, 10), (4, 11), (4, 12)},
+                    'last_season': {(1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'goals_condition': {(5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4)},
+                    'goals_latest': {(6, 0), (6, 1), (6, 2), (7, 0), (7, 1), (7, 2), (7, 3), (8, 1), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'last_season': {(1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (3, 10), (4, 10)},
+                    'goals_condition': {(6, 5), (6, 6)},
+                    'goals_latest': {(7, 2), (7, 3), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'last_season': {(1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (3, 10), (4, 10)},
+                    'goals_condition': {(4, 5), (4, 6), (4, 7), (5, 5), (5, 6), (5, 7), (5, 8), (5, 9)},
+                    'goals_latest': {(8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14)},
+                    'goals_condition': {(2, 2), (2, 3), (2, 4)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (4, 0), (4, 1), (4, 2), (4, 3), (5, 0), (5, 1), (5, 2), (5, 3), (5, 4), (6, 0), (6, 1), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (8, 5), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(1, 8), (1, 9), (2, 8), (2, 9), (3, 8), (3, 9), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14)},
+                    'goals_condition': {(2, 5)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (3, 3), (4, 0), (4, 1), (4, 2), (4, 3), (4, 4), (4, 5), (4, 6), (5, 0), (5, 1), (5, 2), (5, 3), (5, 4), (5, 5), (5, 6), (6, 1), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(1, 8), (1, 9), (2, 8), (2, 9), (3, 8), (3, 9), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 12), (10, 13), (10, 14)},
+                    'goals_condition': {(2, 6)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (3, 3), (4, 0), (4, 1), (4, 2), (4, 3), (4, 4), (4, 5), (4, 6), (5, 0), (5, 1), (5, 2), (5, 3), (5, 4), (5, 5), (5, 6), (6, 1), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (10, 12), (10, 13), (10, 14)},
+                    'goals_condition': {(2, 7), (2, 8), (2, 9)},
+                    'goals_latest': {(3, 1), (3, 2), (3, 3), (4, 1), (4, 2), (4, 3), (4, 4), (4, 5), (5, 1), (5, 2), (5, 3), (5, 4), (5, 5), (5, 6), (6, 1), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (6, 7), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(1, 7), (1, 8), (1, 9), (2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14)},
+                    'goals_condition': {(3, 1), (3, 2), (3, 3)},
+                    'goals_latest': {(5, 0), (5, 1), (5, 2), (5, 3), (6, 0), (6, 1), (6, 2), (6, 3), (7, 0), (7, 1), (7, 2), (7, 3), (8, 1), (8, 2), (8, 3), (9, 1), (9, 2), (9, 3)}
+                },
+                {
+                    'current_rank': {(1, 7), (1, 8), (1, 9), (2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14)},
+                    'goals_condition': {(3, 4)},
+                    'goals_latest': {(5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9), (4, 7), (4, 8), (4, 9), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (10, 12), (10, 13), (10, 14)},
+                    'goals_condition': {(3, 5), (3, 6)},
+                    'goals_latest': {(5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(6, 9), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (10, 12), (10, 13), (10, 14)},
+                    'goals_condition': {(3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (3, 10), (4, 10)},
+                    'last_season': {(5, 8), (5, 9), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14)},
+                    'goals_condition': {(4, 2), (4, 3)},
+                    'goals_latest': {(8, 1), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (3, 10), (4, 10)},
+                    'last_season': {(5, 8), (5, 9), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14)},
+                    'goals_condition': {(4, 4)},
+                    'goals_latest': {(5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (3, 10), (3, 11), (3, 12), (3, 13), (4, 10)},
+                    'last_season': {(5, 8), (5, 9), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14)},
+                    'goals_condition': {(4, 5), (4, 6), (4, 7), (4, 8)},
+                    'goals_latest': {(5, 1), (5, 2), (5, 3), (5, 4), (6, 0), (6, 1), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (2, 14), (3, 10), (4, 10)},
+                    'last_season': {(5, 8), (5, 9), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14)},
+                    'goals_condition': {(5, 4)},
+                    'goals_latest': {(7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (2, 10), (2, 14), (3, 10), (4, 10)},
+                    'last_season': {(5, 8), (5, 9), (6, 8), (6, 9), (7, 8), (7, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14)},
+                    'goals_condition': {(5, 5), (5, 6)},
+                    'goals_latest': {(7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(5, 8), (5, 9), (6, 8), (6, 9), (5, 10), (5, 11), (6, 10), (6, 11)},
+                    'last_season': {(1, 8), (1, 9), (2, 8), (2, 9), (3, 8), (3, 9), (4, 8), (4, 9), (1, 10), (2, 10), (3, 10), (4, 10)},
+                    'goals_condition': {(1, 1), (1, 2), (1, 3), (1, 4)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (3, 3), (4, 0), (4, 1), (4, 2), (4, 3), (5, 1), (5, 2), (5, 3), (5, 4)}
+                },
+                {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14)},
+                    'last_season': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (3, 10), (4, 10)},
+                    'goals_condition': {(2, 4)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (3, 3), (4, 0), (4, 1), (4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (5, 10), (5, 11), (5, 12), (6, 10), (6, 11), (6, 12)},
+                    'last_season': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (3, 10), (4, 10)},
+                    'goals_condition': {(2, 2), (2, 3)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (3, 3), (4, 0), (4, 1), (4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16)},
+                    'last_season': {(1, 7), (1, 8), (1, 9), (2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (3, 10), (3, 11), (3, 12), (3, 13), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'goals_condition': {(2, 5), (2, 6), (2, 7), (2, 8), (2, 9)},
+                    'goals_latest': {(5, 2), (5, 3), (5, 4), (5, 5), (5, 6), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (6, 7),(7, 1), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 1), (8, 2), (8, 3), (8, 4), (8, 5), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (5, 10), (5, 11), (5, 12), (6, 10), (6, 11), (6, 12)},
+                    'last_season': {(1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (2, 11), (3, 10), (3, 11), (4, 10), (4, 11)},
+                    'goals_condition': {(3, 3), (3, 4), (4, 3), (4, 4)},
+                    'goals_latest': {(6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (5, 10), (5, 11), (5, 12), (6, 10), (6, 11), (6, 12)},
+                    'last_season': {(1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (2, 13), (3, 10), (3, 11), (3, 12), (3, 13), (4, 10), (4, 11), (4, 12), (4, 13)},
+                    'goals_condition': {(3, 5), (3, 6)},
+                    'goals_latest': {(7, 3), (7, 4), (7, 5), (7, 6), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14)},
+                    'last_season': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (3, 10), (3, 11), (3, 12), (4, 10), (4, 11), (4, 12)},
+                    'goals_condition': {(3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(4, 2), (4, 3), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 1), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14)},
+                    'last_season': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (3, 10), (4, 10)},
+                    'goals_condition': {(4, 5), (4, 6), (4, 7)},
+                    'goals_latest': {(6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9)},
+                    'last_season': {(1, 3), (1, 4), (1, 5), (1, 6), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (4, 5), (4, 6), (4, 7), (4, 8)},
+                    'goals_condition': {(5, 5), (5, 6), (5, 7)},
+                    'goals_latest': {(7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15)},
+                    'last_season': {(5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16)},
+                    'goals_condition': {(1, 3), (1, 4), (1, 5)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (4, 0), (4, 1), (4, 2), (4, 3), (5, 0), (5, 1), (5, 2), (5, 3), (5, 4)}
+                },
+                {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9)},
+                    'last_season': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15)},
+                    'goals_condition': {(2, 1), (2, 2), (2, 3)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (3, 3), (3, 4), (4, 2), (4, 3), (4, 4), (5, 1), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15)},
+                    'last_season': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15)},
+                    'goals_condition': {(2, 4)},
+                    'goals_latest': {(5, 1), (5, 2), (5, 3), (6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (7, 5), (8, 1), (8, 2), (8, 3), (8, 4), (8, 5), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (5, 17), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16)},
+                    'last_season': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15)},
+                    'goals_condition': {(2, 5), (2, 6)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (3, 3), (4, 0), (4, 1), (4, 2), (4, 3), (4, 4), (5, 0), (5, 1), (5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15)},
+                    'last_season': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (13, 14), (13, 15), (14, 15), (14, 16)},
+                    'goals_condition': {(2, 7), (2, 8), (2, 9)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (5, 10), (6, 10)},
+                    'last_season': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (6, 10), (7, 10), (8, 10), (9, 10)},
+                    'goals_condition': {(3, 2), (3, 3), (3, 4)},
+                    'goals_latest': {(8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15)},
+                    'last_season': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (13, 14), (13, 15), (14, 15), (14, 16)},
+                    'goals_condition': {(3, 5), (3, 6)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15)},
+                    'last_season': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (13, 14), (13, 15), (14, 15), (14, 16)},
+                    'goals_condition': {(3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15)},
+                    'last_season': {(5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15)},
+                    'goals_condition': {(4, 5), (4, 6), (4, 7)},
+                    'goals_latest': {(5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(7, 8), (7, 9), (8, 9), (7, 10), (7, 11), (7, 12), (8, 10), (8, 11), (8, 12)},
+                    'last_season': {(1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (2, 11), (3, 10), (3, 11), (3, 12), (4, 10), (4, 11), (4, 12)},
+                    'goals_condition': {(2, 2), (2, 3), (2, 4)},  
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (3, 3), (4, 0), (4, 1), (4, 2), (4, 3), (5, 0), (5, 1), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (7, 5), (8, 1), (8, 2), (8, 3), (8, 4), (8, 5), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(7, 8), (7, 9), (8, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14)},
+                    'last_season': {(1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (2, 11), (3, 10), (3, 11), (3, 12), (4, 10), (4, 11), (4, 12)},
+                    'goals_condition': {(2, 5), (2, 6), (2, 7), (2, 8), (2, 9)},
+                    'goals_latest': {(5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(7, 8), (7, 9), (8, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14)},
+                    'last_season': {(1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (2, 11), (3, 10), (3, 11), (4, 10), (4, 11), (4, 12)},
+                    'goals_condition': {(3, 3), (3, 4), (4, 5), (4, 6)},
+                    'goals_latest': {(6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(7, 8), (7, 9), (8, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14)},
+                    'last_season': {(1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (2, 11), (3, 10), (3, 11), (4, 10), (4, 11), (4, 12)},
+                    'goals_condition': {(3, 5), (3, 6), (3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15)},
+                    'last_season': {(5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (5, 17), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16), (6, 17)},
+                    'goals_condition': {(0, 1), (0, 2), (0, 3), (0, 4)},
+                    'goals_latest': {(2, 0), (2, 1), (2, 2), (3, 0), (3, 1), (3, 2), (3, 3), (4, 1), (4, 2), (4, 3), (4, 4)}
+                },
+                {
+                    'current_rank': {(7, 8), (7, 9), (8, 9), (7, 10), (7, 11), (7, 12), (8, 10), (8, 11), (8, 12)},
+                    'last_season': {(5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 12), (10, 13), (10, 14), (10, 15)},
+                    'goals_condition': {(2, 2), (2, 3)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (4, 0), (4, 1), (4, 2), (4, 3), (5, 0), (5, 1), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 1), (8, 2), (8, 3), (8, 4), (8, 5), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(7, 8), (7, 9), (8, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15)},
+                    'last_season': {(5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 12), (10, 13), (10, 14), (10, 15)},
+                    'goals_condition': {(2, 4)},
+                    'goals_latest': {(4, 0), (4, 1), (4, 2), (4, 3), (4, 4), (5, 1), (5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15)},
+                    'last_season': {(5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (13, 14), (13, 15), (14, 15), (14, 16)},
+                    'goals_condition': {(2, 5), (2, 6)},
+                    'goals_latest': {(3, 3), (3, 4), (4, 3), (4, 4), (4, 5), (4, 6), (5, 2), (5, 3), (5, 4), (5, 5), (5, 6), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(7, 10), (7, 11), (7, 12), (8, 10), (8, 11), (8, 12)},
+                    'last_season': {(5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (13, 14), (13, 15), (14, 15), (14, 16)},
+                    'goals_condition': {(2, 7), (2, 8), (2, 9)},
+                    'goals_latest': {(3, 1), (3, 2), (3, 3), (4, 2), (4, 3), (4, 4), (4, 5), (5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(7, 10), (7, 11), (7, 12), (8, 10), (8, 11), (8, 12)},
+                    'last_season': {(5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (13, 14), (13, 15), (14, 15), (14, 16)},
+                    'goals_condition': {(3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (4, 5), (5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15)},
+                    'last_season': {(5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (13, 14), (13, 15), (14, 15), (14, 16)},
+                    'goals_condition': {(3, 5), (3, 6)},
+                    'goals_latest': {(5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(7, 12), (7, 13), (7, 14), (7, 15), (8, 12), (8, 13), (8, 14), (8, 15)},
+                    'last_season': {(5, 9), (6, 9), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15)},
+                    'goals_condition': {(4, 5), (4, 6), (4, 7), (4, 8), (4, 9)},
+                    'goals_latest': {(5, 2), (5, 3), (5, 4), (5, 5), (5, 6), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15)},
+                    'last_season': {(5, 9), (6, 9), (7, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (13, 14), (13, 15), (14, 15), (14, 16)},
+                    'goals_condition': {(5, 5), (5, 6), (5, 7), (5, 8), (5, 9)},
+                    'goals_latest': {(6, 4), (6, 5), (6, 6), (6, 7), (7, 3), (7, 4), (7, 5), (7, 6), (7, 7), (8, 3), (8, 4), (8, 5), (8, 6), (8, 7), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 13), (11, 14), (11, 15), (12, 13), (12, 14), (12, 15)},
+                    'last_season': {(2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9), (4, 7), (4, 8), (4, 9), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'goals_condition': {(2, 2), (2, 3), (2, 4)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (3, 3), (4, 0), (4, 1), (4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 13), (12, 14), (12, 15), (12, 16)},
+                    'last_season': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (2, 10), (3, 10), (4, 10)},
+                    'goals_condition': {(3, 3), (3, 4), (3, 5), (3, 6), (3, 7)},
+                    'goals_latest': {(6, 1), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(9, 15), (10, 15), (10, 16), (10, 17), (10, 18), (11, 15), (11, 16), (11, 17), (11, 18), (12, 15), (12, 16), (12, 17), (12, 18), (13, 15), (13, 16), (13, 17), (13, 18), (14, 15), (14, 16), (14, 17), (14, 18)},
+                    'last_season': {(1, 7), (1, 8), (1, 9), (2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'goals_condition': {(4, 5), (4, 6), (4, 7)},
+                    'goals_latest': {(6, 3), (6, 4), (6, 5), (6, 6), (7, 3), (7, 4), (7, 5), (8, 3), (8, 4), (8, 5), (8, 6), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(9, 12), (9, 13), (9, 14), (10, 12), (10, 13), (10, 14), (11, 13), (11, 14), (12, 13), (12, 14), (13, 14)},
+                    'last_season': {(1, 7), (1, 8), (1, 9), (2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'goals_condition': {(4, 5), (4, 6), (4, 7)},
+                    'goals_latest': {(6, 3), (6, 4), (6, 5), (6, 6), (7, 3), (7, 4), (7, 5), (8, 3), (8, 4), (8, 5), (8, 6), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(10, 13), (10, 14), (10, 15), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (13, 14), (13, 15), (13, 16), (13, 17), (14, 15), (14, 16), (14, 17), (14, 18)},
+                    'last_season': {(5, 8), (5, 9), (6, 8), (6, 9), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 16), (5, 17), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (9, 17), (10, 11), (10, 12), (10, 13), (10, 14)},
+                    'goals_condition': {(0, 0), (0, 1), (0, 2), (0, 3), (0, 4)},
+                    'goals_latest': {(2, 0), (2, 1), (2, 2), (3, 0), (3, 1), (3, 2)}
+                },
+                {
+                    'current_rank': {(10, 13), (10, 14), (10, 15), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (13, 14), (13, 15), (13, 16), (13, 17), (14, 15), (14, 16), (14, 17), (14, 18)},
+                    'last_season': {(5, 8), (5, 9), (6, 8), (6, 9), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 16), (5, 17), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (9, 17), (10, 11), (10, 12), (10, 13), (10, 14)},
+                    'goals_condition': {(1, 1), (1, 2), (1, 3), (1, 4), (1, 5)},
+                    'goals_latest': {(2, 2), (2, 3), (2, 4), (2, 5), (3, 1), (3, 2), (3, 3), (3, 4), (3, 5)}
+                },
+                {
+                    'current_rank': {(9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 12), (10, 13), (10, 14), (10, 15)},
+                    'last_season': {(5, 9), (6, 9), (7, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 12), (8, 13), (8, 14), (8, 15), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (9, 17), (10, 11), (10, 12), (10, 13), (10, 14), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (12, 16), (13, 14), (13, 15), (13, 16)},
+                    'goals_condition': {(2, 3), (2, 4), (2, 5)},
+                    'goals_latest': {(6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (13, 14), (13, 15), (13, 16), (13, 17), (14, 15), (14, 16), (14, 17), (14, 18)},
+                    'last_season': {(6, 9), (7, 9), (8, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (9, 17), (10, 11), (10, 12), (10, 13), (10, 14), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (12, 16)},
+                    'goals_condition': {(2, 6), (2, 7)},
+                    'goals_latest': {(4, 5), (4, 6), (5, 5), (5, 6), (5, 7), (6, 5), (6, 6)},
+                    'current_rank': {(9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (13, 14), (13, 15), (13, 16), (13, 17), (14, 15), (14, 16), (14, 17), (14, 18)},
+                    'last_season': {(6, 9), (7, 9), (8, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (9, 17), (10, 11), (10, 12), (10, 13), (10, 14), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (12, 16)},
+                    'goals_condition': {(2, 9)},
+                    'goals_latest': {(3, 3), (3, 4), (3, 5), (3, 6), (4, 3), (4, 4), (4, 5), (4, 6), (4, 7), (5, 4), (5, 5), (5, 6), (5, 7)}
+                },
+                {
+                    'current_rank': {(10, 13), (10, 14), (10, 15), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (13, 14), (13, 15), (13, 16), (13, 17), (14, 15), (14, 16), (14, 17), (14, 18)},
+                    'last_season': {(9, 13), (9, 14), (9, 15), (9, 16), (9, 17), (10, 11), (10, 12), (10, 13), (10, 14), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (12, 16), (13, 14), (13, 15), (13, 16), (13, 17)},
+                    'goals_condition': {(3, 3), (3, 4)},
+                    'goals_latest': {(4, 1), (4, 2), (4, 3), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(9, 13), (9, 14), (9, 15), (10, 13), (10, 14), (10, 15), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (13, 14), (13, 15), (13, 16), (13, 17), (14, 15), (14, 16), (14, 17), (14, 18)},
+                    'last_season': {(10, 14), (10, 15), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (12, 16), (13, 14), (13, 15), (13, 16), (13, 17), (14, 15), (14, 16)},
+                    'goals_condition': {(3, 5), (3, 6)},
+                    'goals_latest': {(5, 2), (5, 3), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(9, 12), (9, 13), (9, 14), (9, 15), (10, 12), (10, 13), (10, 14), (10, 15), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (13, 14), (13, 15), (13, 16), (13, 17), (14, 15), (14, 16), (14, 17), (14, 18)},
+                    'last_season': {(5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 16), (5, 17), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (9, 17), (10, 11), (10, 12), (10, 13), (10, 14), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (12, 16)},
+                    'goals_condition': {(3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(4, 3), (4, 4), (4, 5), (4, 6), (5, 3), (5, 4), (5, 5), (5, 6), (6, 3), (6, 4), (6, 5), (6, 6), (7, 3), (7, 4), (7, 5), (7, 6), (8, 3), (8, 4), (8, 5), (8, 6), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (13, 14), (13, 15), (13, 16), (13, 17), (14, 15), (14, 16), (14, 17), (14, 18)},
+                    'last_season': {(5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 16), (5, 17), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (9, 17), (10, 11), (10, 12), (10, 13), (10, 14), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (12, 16)},
+                    'goals_condition': {(4, 5), (4, 6)},
+                    'goals_latest': {(5, 4), (5, 5), (6, 3), (6, 4), (6, 5), (7, 3), (7, 4), (7, 5), (7, 6), (8, 3), (8, 4), (8, 5), (8, 6), (9, 3), (9, 4), (9, 5), (9, 6) }
+                },
+                {
+                    'current_rank': {(9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 13), (12, 14), (12, 15), (12, 16), (12, 17), (13, 14), (13, 15), (13, 16), (13, 17), (14, 15), (14, 16), (14, 17), (14, 18)},
+                    'last_season': {(5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 16), (5, 17), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (9, 17), (10, 11), (10, 12), (10, 13), (10, 14), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 13), (12, 14), (12, 15), (12, 16)},
+                    'goals_condition': {(4, 7), (4, 8), (4, 9), (5, 5), (5, 6), (5, 7)},
+                    'goals_latest': {(6, 4), (6, 5), (7, 4), (7, 5), (7, 6), (8, 4), (8, 5), (8, 6), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (2, 10), (2, 11), (2, 12), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (4, 3), (5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (10, 4), (11, 4)},
+                    'goals_condition': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9)},
+                    'goals_latest': {(7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (2, 10), (2, 11), (2, 12), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(3, 2), (4, 2), (4, 3), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (10, 4), (11, 4)},
+                    'goals_condition': {(3, 2), (3, 3), (3, 4), (3, 5), (4, 3), (4, 4), (4, 5), (5, 3), (5, 4), (5, 5), (5, 6), (6, 4), (6, 5), (6, 6), (6, 7)},
+                    'goals_latest': {(7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (8, 5), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (2, 10), (2, 11), (2, 12), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(3, 2), (4, 2), (4, 3), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (10, 4), (11, 4)},
+                    'goals_condition': {(7, 2), (7, 3), (7, 4)},
+                    'goals_latest': {(9, 1), (9, 2), (9, 3)}
+                },
+                {
+                    'current_rank': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (2, 10), (2, 11), (2, 12), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (4, 3), (5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (10, 4), (11, 4)},
+                    'goals_condition': {(3, 6), (3, 7), (3, 8), (3, 9), (4, 6), (4, 7), (4, 8), (4, 9), (5, 6), (5, 7), (5, 8), (5, 9)},
+                    'goals_latest': {(7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (6, 10), (6, 11), (6, 12), (7, 10), (7, 11), (7, 12), (8, 10), (8, 11), (8, 12)},
+                    'last_season': {(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (4, 3), (5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (10, 4), (11, 4)},
+                    'goals_condition': {(1, 2), (1, 3), (1, 4), (1, 5)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (3, 3), (4, 0), (4, 1), (4, 2), (4, 3), (5, 2), (5, 3)}
+                },
+                {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (6, 10), (6, 11), (6, 12), (7, 10), (7, 11), (7, 12), (8, 10), (8, 11), (8, 12)},
+                    'last_season': {(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (4, 3), (5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (10, 4), (11, 4)},
+                    'goals_condition': {(2, 4), (2, 5), (2, 6)},
+                    'goals_latest': {(3, 1), (3, 2), (3, 3), (4, 1), (4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (5, 5), (7, 3), (7, 4), (7, 5), (7, 6), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (6, 10), (6, 11), (6, 12), (7, 10), (7, 11), (7, 12), (8, 10), (8, 11), (8, 12)},
+                    'last_season': {(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (4, 3), (5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (10, 4), (11, 4)},
+                    'goals_condition': {(3, 3), (3, 4), (3, 5), (3, 6), (4, 4), (4, 5), (4, 6)},
+                    'goals_latest': {(6, 0), (6, 1), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 0), (7, 1), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (6, 10), (6, 11), (6, 12), (7, 10), (7, 11), (7, 12), (8, 10), (8, 11), (8, 12)},
+                    'last_season': {(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (4, 3), (5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (10, 4), (11, 4)},
+                    'goals_condition': {(4, 7), (4, 8), (4, 9)},
+                    'goals_latest': {(5, 3), (5, 4), (5, 5), (5, 6), (6, 4), (6, 5), (6, 6), (6, 7),(7, 4), (7, 5), (7, 6), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (7, 8), (7, 9), (8, 9), (5, 10), (5, 11), (5, 12), (6, 10), (6, 11), (6, 12), (7, 10), (7, 11), (7, 12), (8, 10), (8, 11), (8, 12)},
+                    'last_season': {(2, 1), (3, 1), (3, 2), (4, 1), (4, 2), (4, 3), (5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (10, 4), (11, 4)},
+                    'goals_condition': {(5, 6), (5, 7), (5, 8), (5, 9)},
+                    'goals_latest': {(6, 4), (6, 5), (6, 6), (6, 7),(7, 4), (7, 5), (7, 6), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'last_season': {(6, 5), (7, 5), (7, 6), (8, 5), (8, 6), (9, 5), (9, 6), (10, 5), (10, 6), (11, 5), (11, 6), (12, 5), (12, 6), (13, 5), (14, 5), (15, 5)},
+                    'goals_condition': {(2, 3), (2, 4)},
+                    'goals_latest': {(4, 2), (4, 3), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'last_season': {(6, 5), (7, 5), (7, 6), (8, 5), (8, 6), (9, 5), (9, 6), (10, 5), (10, 6), (11, 5), (11, 6), (12, 5), (12, 6), (13, 5), (14, 5), (15, 5)},
+                    'goals_condition': {(2, 5), (2, 6)},
+                    'goals_latest': {(3, 1), (3, 2), (3, 3), (4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (5, 5), (5, 6), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'last_season': {(6, 5), (7, 5), (7, 6), (8, 5), (8, 6), (9, 5), (9, 6), (10, 5), (10, 6), (11, 5), (11, 6), (12, 5), (12, 6)},
+                    'goals_condition': {(3, 2), (3, 3), (3, 4), (3, 5), (3, 6)},
+                    'goals_latest': {(4, 0), (4, 1), (4, 2), (4, 3), (5, 0), (5, 1), (5, 2), (5, 3), (6, 0), (6, 1), (6, 2), (6, 3), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15)},
+                    'last_season': {(6, 5), (7, 5), (7, 6), (8, 5), (8, 6), (9, 5), (9, 6), (10, 5), (10, 6), (11, 5), (11, 6), (12, 5), (12, 6)},
+                    'goals_condition': {(4, 3), (4, 4), (4, 5), (4, 6), (5, 3), (5, 4), (5, 5), (5, 6), (6, 3), (6, 4), (6, 5), (6, 6)},
+                    'goals_latest': {(7, 1), (7, 2), (8, 1), (8, 2), (8, 3), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(1, 7), (1, 8), (1, 9), (2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15), (4, 16)},
+                    'last_season': {(8, 7), (9, 7), (9, 8), (1, 69), (10, 11), (10, 8), (10, 9), (11, 10), (11, 7), (11, 8), (11, 9), (12, 10), (12, 11), (12, 7), (12, 8), (12, 9), (13, 10), (13, 11), (13, 12), (13, 7), (13, 8), (13, 9), (14, 10), (14, 11), (14, 12), (14, 13), (14, 7), (14, 8), (14, 9), (15, 10), (15, 11), (15, 12), (15, 13), (15, 14), (15, 7), (15, 8), (15, 9), (16, 10), (16, 12), (16, 13), (16, 14)},
+                    'goals_condition': {(2, 2), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9)},
+                    'goals_latest': {(3, 1), (3, 2), (4, 1), (4, 2), (5, 1), (5, 2), (5, 3), (6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(1, 7), (1, 8), (1, 9), (2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (3, 15), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14), (4, 15), (4, 16)},
+                    'last_season': {(8, 7), (9, 7), (9, 8), (11, 7), (12, 8), (13, 8), (14, 8), (15, 8), (10, 8), (10, 9), (11, 8), (11, 9), (12, 11), (12, 7), (13, 11), (13, 12), (13, 7), (14, 11), (14, 12), (14, 13), (14, 7), (15, 11), (15, 12), (15, 13), (15, 14), (15, 7), (16, 11), (16, 12), (16, 13), (16, 14)},
+                    'goals_condition': {(1, 4), (1, 5)},
+                    'goals_latest': {(3, 2), (3, 3), (4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5)}
+                },
+                {
+                    'current_rank': {(3, 2), (4, 2), (4, 3), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 3), (8, 4), (9, 3), (9, 4), (10, 3), (10, 4), (11, 4)},
+                    'last_season': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'goals_condition': {(1, 2), (1, 3), (1, 4), (1, 5), (2, 1), (2, 2), (2, 3), (2, 4)},
+                    'goals_latest': {(3, 1), (3, 2), (3, 3), (4, 2), (4, 3), (4, 4), (5, 3), (5, 4), (5, 5), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(3, 2), (4, 2), (4, 3), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 3), (8, 4), (9, 3), (9, 4), (10, 3), (10, 4), (11, 4)},
+                    'last_season': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'goals_condition': {(3, 1), (3, 2), (3, 3)},
+                    'goals_latest': {(4, 0), (4, 1), (4, 2), (5, 0), (5, 1), (5, 2), (5, 3), (6, 0), (6, 1), (6, 2), (6, 3), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(3, 2), (4, 2), (4, 3), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 3), (8, 4), (9, 3), (9, 4), (10, 3), (10, 4), (11, 4)},
+                    'last_season': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'goals_condition': {(3, 4), (3, 5), (3, 6), (3, 7)},
+                    'goals_latest': {(6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(3, 2), (4, 2), (4, 3), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 3), (9, 4), (10, 3), (10, 4), (11, 4)},
+                    'last_season': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (2, 11), (2, 12), (2, 13), (2, 14), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'goals_condition': {(4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4)},
+                    'goals_latest': {(7, 1), (7, 2), (8, 1), (8, 2), (9, 1), (9, 2)}
+                },
+                {
+                    'current_rank': {(9, 7), (10, 7), (10, 8), (11, 7), (11, 8), (11, 9), (12, 10), (12, 11), (12, 9), (13, 10), (13, 11), (13, 12), (13, 9), (14, 10), (14, 9), (15, 10)},
+                    'last_season': {(3, 5), (3, 6), (3, 7), (3, 8), (4, 5), (4, 6), (4, 7), (4, 8)},
+                    'goals_condition': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9)},
+                    'goals_latest': {(3, 2), (3, 3), (3, 4), (4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(4, 3), (5, 3), (5, 4), (6, 3), (6, 4), (7, 3), (7, 4), (8, 3), (8, 4), (9, 3), (9, 4), (10, 3), (10, 4), (11, 4)},
+                    'last_season': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 8), (6, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14)},
+                    'goals_condition': {(1, 2), (1, 3), (1, 4), (1, 5), (2, 3), (2, 4), (2, 5), (2, 6), (3, 4), (3, 5), (3, 6), (4, 5), (4, 6)},
+                    'goals_latest': {(5, 3), (5, 4), (5, 5), (6, 3), (6, 4), (6, 5), (6, 6), (7, 3), (7, 4), (7, 5), (7, 6), (8, 3), (8, 4), (8, 5), (8, 6), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(6, 5), (7, 5), (7, 6), (8, 5), (8, 6), (9, 5), (9, 6), (10, 5), (10, 6)},
+                    'last_season': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (4, 5), (4, 6), (4, 7), (4, 8)},
+                    'goals_condition': {(2, 4), (2, 5), (3, 4), (3, 5), (3, 6)},
+                    'goals_latest': {(4, 1), (4, 2), (4, 3), (5, 1), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(6, 5), (7, 5), (7, 6), (8, 5), (8, 6), (9, 5), (9, 6), (10, 5), (10, 6)},
+                    'last_season': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (4, 5), (4, 6), (4, 7), (4, 8)},
+                    'goals_condition': {(3, 2), (3, 3), (4, 4), (4, 5), (4, 6), (5, 5), (5, 6), (6, 5), (6, 6)},
+                    'goals_latest': {(6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 1), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(6, 5), (7, 5), (7, 6), (8, 5), (8, 6), (8, 7), (9, 5), (9, 6), (9, 7), (9, 8), (10, 5), (10, 6), (10, 7), (10, 8), (10, 9)},
+                    'last_season': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16)},
+                    'goals_condition': {(1, 2), (1, 3), (1, 4), (1, 5)},
+                    'goals_latest': {(3, 2), (3, 3), (3, 4), (4, 1), (4, 2), (4, 3), (4, 4), (5, 1), (5, 2), (5, 3), (5, 4)}
+                },
+                {
+                    'current_rank': {(6, 5), (7, 5), (7, 6), (8, 5), (8, 6), (8, 7), (9, 5), (9, 6), (9, 7), (9, 8), (10, 5), (10, 6), (10, 7), (10, 8), (10, 9)},
+                    'last_season': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16)},
+                    'goals_condition': {(2, 2), (2, 3)},
+                    'goals_latest': {(4, 0), (4, 1), (4, 2), (4, 3), (4, 4), (5, 0), (5, 1), (5, 2), (5, 3), (5, 4), (6, 0), (6, 1), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(6, 5), (7, 5), (7, 6), (8, 5), (8, 6), (8, 7), (9, 5), (9, 6), (9, 7), (9, 8), (10, 5), (10, 6), (10, 7), (10, 8), (10, 9)},
+                    'last_season': {(5, 6), (5, 7), (5, 8), (5, 9), (6, 7), (6, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16)},
+                    'goals_condition': {(2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (4, 5), (4, 6), (5, 2), (5, 3), (5, 4), (5, 5), (5, 6), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(6, 5), (7, 5), (7, 6), (8, 5), (8, 6), (8, 7), (9, 5), (9, 6), (9, 7), (9, 8), (10, 5), (10, 6), (10, 7), (10, 8), (10, 9)},
+                    'last_season': {(5, 7), (5, 8), (5, 9), (6, 7), (6, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16)},
+                    'goals_condition': {(3, 2), (3, 3), (3, 4), (3, 5), (3, 6), (3, 7), (4, 2), (4, 3), (4, 4), (4, 5), (4, 6), (4, 7)},
+                    'goals_latest': {(6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(6, 4), (7, 6), (10, 6), (10, 7), (10, 9), (11, 10), (11, 6), (11, 7), (11, 9), (12, 10), (12, 11), (12, 6), (12, 7), (12, 9), (13, 10), (13, 11), (13, 12), (13, 7), (14, 10), (14, 11), (14, 12), (14, 13), (14, 9), (15, 10), (15, 11), (15, 12), (15, 13), (15, 14), (15, 9), (16, 10), (16, 11), (16, 12), (16, 13), (16, 14), (16, 15), (16, 9), (17, 15)},
+                    'last_season': {(7, 12), (7, 13), (7, 14), (7, 15), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (10, 17), (10, 18), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 14), (12, 15), (12, 16), (12, 17), (12, 18), (13, 14), (13, 15), (13, 16)},
+                    'goals_condition': {(2, 2), (2, 3), (2, 4), (2, 5), (2, 6), (3, 5)},
+                    'goals_latest': {(4, 1), (4, 2), (4, 3), (4, 4), (5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(6, 4), (7, 6), (10, 6), (10, 7), (10, 9), (11, 10), (11, 6), (11, 7), (11, 9), (12, 10), (12, 11), (12, 6), (12, 7), (12, 9), (13, 10), (13, 11), (13, 12), (13, 7), (14, 10), (14, 11), (14, 12), (14, 13), (14, 9), (15, 10), (15, 11), (15, 12), (15, 13), (15, 14), (15, 9), (16, 10), (16, 11), (16, 12), (16, 13), (16, 14), (16, 15), (16, 9), (17, 15)},
+                    'last_season': {(7, 12), (7, 13), (7, 14), (7, 15), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (10, 17), (10, 18), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 14), (12, 15), (12, 16), (12, 17), (12, 18), (13, 14), (13, 15), (13, 16)},
+                    'goals_condition': {(2, 7), (2, 8), (2, 9), (3, 6), (3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (4, 5), (4, 6), (5, 2), (5, 3), (5, 4), (5, 5), (5, 6), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(6, 4), (7, 6), (10, 6), (10, 7), (10, 9), (11, 10), (11, 6), (11, 7), (11, 9), (12, 10), (12, 11), (12, 60), (12, 70), (12, 9), (13, 10), (13, 11), (13, 12), (13, 7), (14, 10), (14, 11), (14, 12), (14, 13), (14, 9), (15, 10), (15, 11), (15, 12), (15, 13), (15, 14), (15, 9), (16, 10), (16, 11), (16, 12), (16, 13), (16, 14), (16, 15), (16, 9), (17, 15)},
+                    'last_season': {(7, 12), (7, 13), (7, 14), (7, 15), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (10, 17), (10, 18), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 14), (12, 15), (12, 16), (12, 17), (12, 18), (13, 15), (13, 16)},
+                    'goals_condition': {(4, 6), (4, 7), (4, 8), (4, 9), (5, 6), (5, 7), (5, 8), (5, 9)},
+                    'goals_latest': {(7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(7, 6), (8, 6), (9, 6), (10, 6), (11, 6), (12, 6)},
+                    'last_season': {(11, 5), (10, 5), (9, 5), (8, 5), (7, 5), (12, 6), (11, 6), (10, 6), (9, 6), (8, 6), (7, 6), (11, 8), (10, 8), (9, 8), (13, 9), (12, 9), (11, 9), (10, 9), (15, 10), (15, 11), (15, 12), (15, 13)},
+                    'goals_condition': {(1, 1), (1, 2), (1, 3), (1, 4)},
+                    'goals_latest': {(2, 0), (2, 1), (2, 2), (3, 0), (3, 1), (3, 2), (3, 3), (4, 0), (4, 1), (4, 2), (4, 3), (5, 2), (5, 3), (5, 4)}
+                },
+                {
+                    'current_rank': {(7, 6), (8, 6), (9, 6), (10, 6), (11, 6), (12, 6)},
+                    'last_season': {(11, 5), (10, 5), (9, 5), (8, 5), (7, 5), (12, 6), (11, 6), (10, 6), (9, 6), (8, 6), (7, 6), (11, 8), (10, 8), (9, 8), (13, 9), (12, 9), (11, 9), (10, 9), (15, 10), (15, 11), (15, 12), (15, 13)},
+                    'goals_condition': {(2, 2), (2, 3), (2, 4), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4)}
+                },
+                {
+                    'current_rank': {(7, 6), (8, 6), (9, 6), (10, 6), (11, 6), (12, 6)},
+                    'last_season': {(11, 5), (10, 5), (9, 5), (8, 5), (7, 5), (12, 6), (11, 6), (10, 6), (9, 6), (8, 6), (7, 6), (11, 8), (10, 8), (9, 8), (13, 9), (12, 9), (11, 9), (10, 9), (15, 10), (15, 11), (15, 12), (15, 13)},
+                    'goals_condition': {(4, 4), (4, 5), (4, 6), (4, 7)},
+                    'goals_latest': {(5, 0), (5, 1), (5, 2), (5, 3), (6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(7, 6), (8, 6), (9, 6), (10, 6), (11, 6), (12, 6)},
+                    'last_season': {(11, 5), (10, 5), (9, 5), (8, 5), (7, 5), (12, 6), (11, 6), (10, 6), (9, 6), (8, 6), (7, 6), (11, 8), (10, 8), (9, 8), (13, 9), (12, 9), (11, 9), (10, 9), (15, 10), (15, 11), (15, 12), (15, 13)},
+                    'goals_condition': {(5, 3), (5, 4), (5, 5), (5, 6), (5, 7)},
+                    'goals_latest': {(6, 1), (6, 2), (6, 3), (7, 1), (7, 2), (7, 3), (8, 1), (8, 2), (8, 3), (9, 1), (9, 2), (9, 3)}
+                },
+                {
+                    'current_rank': {(13, 7), (12, 7), (11, 7), (10, 7), (9, 7)},
+                    'last_season': {(6, 2), (5, 2), (4, 2), (8, 3), (7, 3), (6, 3), (5, 3), (8, 4), (7, 4), (6, 4), (5, 4)},
+                    'goals_condition': {(3, 1), (3, 2), (3, 3), (4, 1), (4, 2), (4, 3), (4, 4)},
+                    'goals_latest': {(6, 0), (6, 1), (6, 2), (6, 3), (6, 4), (7, 0), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(13, 7), (12, 7), (11, 7), (10, 7), (9, 7)},
+                    'last_season': {(6, 2), (5, 2), (4, 2), (8, 3), (7, 3), (6, 3), (5, 3), (8, 4), (7, 4), (6, 4), (5, 4)},
+                    'goals_condition': {(3, 4), (3, 5), (3, 6)},
+                    'goals_latest': {(5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(12, 8), (11, 8), (10, 8), (9, 8)},
+                    'last_season': {(6, 2), (5, 2), (4, 2), (9, 3), (8, 3), (7, 3), (6, 3), (5, 3), (8, 4), (7, 4), (6, 4), (5, 4), (4, 1), (3, 1)},
+                    'goals_condition': {(3, 3), (3, 4), (3, 5), (3, 6), (3, 7), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(12, 8), (11, 8), (10, 8), (9, 8)},
+                    'last_season': {(6, 2), (5, 2), (4, 2), (9, 3), (8, 3), (7, 3), (6, 3), (5, 3), (8, 4), (7, 4), (6, 4), (5, 4), (4, 1), (3, 1)},
+                    'goals_condition': {(4, 4), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9)},
+                    'goals_latest': {(5, 2), (5, 3), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(16, 8), (15, 8), (14, 8), (13, 8), (12, 8), (11, 8), (10, 8), (9, 8)},
+                    'last_season': {(11, 5), (10, 5), (9, 5), (8, 5), (7, 5), (12, 6), (11, 6), (11, 10), (10, 6), (9, 6), (8, 6), (7, 6), (12, 8), (11, 8), (10, 9), (10, 8), (9, 8), (15, 9), (14, 9), (13, 9), (12, 9), (11, 9), (10, 9), (15, 10), (15, 11), (15, 12), (15, 13), (16, 11), (14, 10), (12, 10)},
+                    'goals_condition': {(0, 5), (0, 6), (2, 4), (2, 5), (2, 6), (2, 7), (3, 5), (3, 6), (3, 7)},
+                    'goals_latest': {(3, 2), (3, 3), (3, 4), (4, 2), (4, 3), (4, 4), (4, 5), (5, 3), (5, 4), (5, 5), (6, 3), (6, 4), (6, 5), (6, 6), (7, 4), (7, 5), (7, 6)}
+                },
+                {
+                    'current_rank': {(16, 8), (15, 8), (14, 8), (13, 8), (12, 8), (11, 8), (10, 8), (9, 8)},
+                    'last_season': {(11, 5), (10, 5), (9, 5), (8, 5), (7, 5), (12, 6), (11, 6), (11, 10), (10, 6), (9, 6), (8, 6), (7, 6), (12, 8), (11, 8), (10, 9), (10, 8), (9, 8), (15, 9), (14, 9), (13, 9), (12, 9), (11, 9), (10, 9), (15, 10), (15, 11), (15, 12), (15, 13), (16, 11), (14, 10), (12, 10)},
+                    'goals_condition': {(4, 4), (4, 5), (5, 4), (5, 5), (4, 6)},
+                    'goals_latest': {(6, 4), (6, 5), (6, 6), (7, 4), (7, 5), (7, 6), (8, 4), (8, 5), (8, 6), (9, 4), (9, 5), (9, 6), (9, 7)}
+                },
+                {
+                    'current_rank': {(16, 8), (15, 8), (14, 8), (13, 8), (12, 8), (11, 8), (10, 8), (9, 8)},
+                    'last_season': {(11, 5), (10, 5), (9, 5), (8, 5), (7, 5), (12, 6), (11, 6), (11, 10), (10, 6), (9, 6), (8, 6), (7, 6), (12, 8), (11, 8), (10, 9), (10, 8), (9, 8), (15, 9), (14, 9), (13, 9), (12, 9), (11, 9), (10, 9), (15, 10), (15, 11), (15, 12), (15, 13), (16, 11), (14, 10), (12, 10)},
+                    'goals_condition': {(7, 2), (7, 3)},
+                    'goals_latest': {(9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(14, 10), (13, 10), (12, 10), (11, 10), (9, 10), (14, 11), (13, 11), (12, 11), (14, 12), (13, 12)},
+                    'last_season': {(12, 5), (11, 5), (10, 5), (9, 5), (8, 5), (7, 5), (6, 5), (10, 4), (9, 4), (8, 4), (7, 4), (6, 4), (5, 4)},
+                    'goals_condition': {(2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(4, 3), (4, 4), (4, 5), (4, 6), (5, 3), (5, 4), (5, 5), (5, 6), (6, 4), (6, 5), (6, 6), (6, 7),(7, 4), (7, 5), (7, 6), (8, 4), (8, 5), (8, 6), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(14, 10), (13, 10), (12, 10), (11, 10), (9, 10), (14, 11), (13, 11), (12, 11), (14, 12), (13, 12)},
+                    'last_season': {(12, 5), (11, 5), (10, 5), (9, 5), (8, 5), (7, 5), (6, 5), (10, 4), (9, 4), (8, 4), (7, 4), (6, 4), (5, 4)},
+                    'goals_condition': {(3, 4), (3, 5), (3, 6), (4, 6), (4, 7), (4, 8), (4, 9)},
+                    'goals_latest': {(6, 3), (6, 4), (6, 5), (7, 3), (7, 4), (7, 5), (8, 3), (8, 4), (8, 5), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(14, 10), (13, 10), (12, 10), (11, 10), (9, 10), (14, 11), (13, 11), (12, 11), (14, 12), (13, 12)},
+                    'last_season': {(14, 7), (15, 7), (13, 7), (12, 7), (14, 8), (15, 8), (13, 8), (12, 8), (15, 9), (11, 8), (15, 7), (14, 7), (13, 7), (12, 7), (11, 7), (15, 9), (14, 9), (13, 9), (12, 9), (11, 9)},
+                    'goals_condition': {(1, 3), (1, 4), (1, 5), (1, 6)},
+                    'goals_latest': {(2, 2), (2, 3), (2, 4), (3, 2), (3, 3), (3, 4), (3, 5), (4, 4), (4, 5), (4, 6), (5, 4), (5, 5), (5, 6), (6, 4), (6, 5), (6, 6)}
+                },
+                {
+                    'current_rank': {(2, 11), (2, 12), (2, 10), (2, 9), (2, 8), (2, 7), (3, 12), (3, 11), (3, 10), (3, 8), (3, 9), (3, 7), (3, 2), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8), (4, 7), (5, 4), (5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 4), (6, 5), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 6), (7, 8), (7, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 7), (8, 9), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 8), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 9), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (11, 13), (11, 14), (11, 15), (11, 16)},
+                    'last_season': {(80, 80)},
+                    'goals_condition': {(1, 2), (1, 3), (1, 4), (1, 5), (1, 6)},
+                    'goals_latest': {(5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5)}
+                },
+                {
+                    'current_rank': {(2, 11), (2, 12), (2, 10), (2, 9), (2, 8), (2, 7), (3, 12), (3, 11), (3, 10), (3, 8), (3, 9), (3, 7), (3, 2), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8), (4, 7), (5, 4), (5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 4), (6, 5), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 6), (7, 8), (7, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 7), (8, 9), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 8), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 9), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (11, 13), (11, 14), (11, 15), (11, 16)},
+                    'last_season': {(80, 80)},
+                    'goals_condition': {(2, 1), (2, 2), (2, 3), (2, 4), (2, 5)},
+                    'goals_latest': {(4, 1), (4, 2), (5, 0), (5, 1), (5, 2), (6, 0), (6, 1), (6, 2), (7, 0), (7, 1), (7, 2)}
+                },
+                {
+                    'current_rank': {(2, 11), (2, 12), (2, 10), (2, 9), (2, 8), (2, 7), (3, 12), (3, 11), (3, 10), (3, 8), (3, 9), (3, 7), (3, 2), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8), (4, 7), (5, 4), (5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 4), (6, 5), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 6), (7, 8), (7, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 7), (8, 9), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 8), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 9), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (11, 13), (11, 14), (11, 15), (11, 16)},
+                    'last_season': {(80, 80)},
+                    'goals_condition': {(3, 1), (3, 2), (3, 3), (3, 4), (4, 4), (4, 5)},
+                    'goals_latest': {(6, 0), (6, 1), (6, 2), (6, 3), (7, 0), (7, 1), (7, 2), (7, 3), (8, 1), (8, 2), (8, 3), (9, 1), (9, 2), (9, 3)}
+                },
+                {
+                    'current_rank': {(2, 11), (2, 12), (2, 10), (2, 9), (2, 8), (2, 7), (3, 12), (3, 11), (3, 10), (3, 8), (3, 9), (3, 7), (3, 2), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8), (4, 7), (5, 4), (5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 4), (6, 5), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (7, 6), (7, 8), (7, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 7), (8, 9), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 8), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 9), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (11, 13), (11, 14), (11, 15), (11, 16)},
+                    'last_season': {(80, 80)},
+                    'goals_condition': {(2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 6), (4, 7), (4, 8), (4, 9)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (5, 1), (5, 2), (5, 3), (6, 1), (6, 2), (6, 3), (7, 1), (7, 2), (7, 3), (8, 2), (8, 3), (9, 1), (9, 2), (9, 3)}
+                },
+                {
+                    'current_rank': {(7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (7, 16), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16)},
+                    'last_season': {(80, 9), (80, 10), (80, 11), (80, 12), (80, 13), (80, 14)},
+                    'goals_condition': {(1, 4), (1, 5), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5), (7, 3), (7, 4), (7, 5), (8, 3), (8, 4), (8, 5), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(7, 4), (8, 4), (7, 5), (8, 5), (7, 6), (8, 6), (9, 6), (8, 7), (9, 7), (10, 7), (9, 8), (10, 8), (11, 8), (10, 9), (11, 9), (11, 10), (12, 10), (12, 11), (13, 11), (13, 12), (14, 12), (15, 12)},
+                    'last_season': {(80, 9), (80, 10), (80, 11), (80, 12), (80, 13), (80, 14)},
+                    'goals_condition': {(1, 2), (1, 3), (1, 4), (1, 5), (2, 2), (2, 3), (2, 4), (2, 5), (3, 3), (3, 4), (3, 5), (3, 6)},
+                    'goals_latest': {(5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 12), (10, 13), (10, 14), (10, 15), (11, 13), (11, 14), (11, 15), (12, 14), (12, 15), (13, 15)},
+                    'last_season': {(80, 9), (80, 10), (80, 11), (80, 12), (80, 13), (80, 14), (80, 15), (80, 16)},
+                    'goals_condition': {(0, 5), (0, 6), (0, 7), (0, 8), (1, 2), (1, 3), (1, 4), (1, 5), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8)},
+                    'goals_latest': {(3, 2), (3, 3), (3, 4), (3, 5), (4, 3), (4, 4), (4, 5), (4, 6), (5, 3), (5, 4), (5, 5), (5, 6), (6, 3), (6, 4), (6, 5), (6, 6), (7, 3), (7, 4), (7, 5), (7, 6)}
+                },
+                {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14)},
+                    'last_season': {(80, 9), (80, 10), (80, 11), (80, 12), (80, 13), (80, 14)},
+                    'goals_condition': {(1, 2), (1, 3), (1, 4), (1, 5)},
+                    'goals_latest': {(2, 1), (2, 2), (2, 3), (3, 2), (3, 3), (4, 2), (4, 3), (4, 4), (4, 5), (5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5)}
+                },
+                {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14)},
+                    'last_season': {(80, 9), (80, 10), (80, 11), (80, 12), (80, 13), (80, 14)},
+                    'goals_condition': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (4, 5), (5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5)}
+                },
+                {
+                    'current_rank': {(1, 9), (1, 8), (1, 10), (1, 11), (1, 12), (2, 11), (2, 12), (2, 10), (2, 9), (2, 8), (3, 12), (3, 11), (3, 10), (3, 8), (3, 9), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8)},
+                    'last_season': {(80, 9), (80, 10), (80, 11), (80, 12), (80, 13), (80, 14)},
+                    'goals_condition': {(2, 2), (2, 3), (2, 4), (2, 5), (2, 6), (3, 5), (3, 6)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(1, 9), (1, 8), (1, 10), (1, 11), (1, 12), (2, 11), (2, 12), (2, 10), (2, 9), (2, 8), (3, 12), (3, 11), (3, 10), (3, 8), (3, 9), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8)},
+                    'last_season': {(80, 9), (80, 10), (80, 11), (80, 12), (80, 13), (80, 14)},
+                    'goals_condition': {(3, 2), (3, 3), (3, 4), (4, 2), (4, 3), (4, 4), (4, 5), (4, 6), (5, 2), (5, 3), (5, 4), (5, 5), (5, 6)},
+                    'goals_latest': {(6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15)},
+                    'last_season': {(80, 3), (80, 4), (80, 5), (80, 6), (80, 7), (80, 8)},
+                    'goals_condition': {(1, 4), (1, 5)},
+                    'goals_latest': {(2, 3), (2, 4), (2, 5), (3, 3), (3, 4), (3, 5), (4, 3), (4, 4), (4, 5), (5, 3), (5, 4), (5, 5), (6, 4), (6, 5)}
+                },
+                {
+                    'current_rank': {(7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15)},
+                    'last_season': {(80, 3), (80, 4), (80, 5), (80, 6), (80, 7), (80, 8)},
+                    'goals_condition': {(2, 6), (2, 7), (2, 8), (3, 6), (3, 7), (3, 8), (3, 9), (4, 6), (4, 7), (4, 8), (4, 9)},
+                    'goals_latest': {(5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15)},
+                    'last_season': {(80, 3), (80, 4), (80, 5), (80, 6), (80, 7), (80, 8)},
+                    'goals_condition': {(2, 4), (2, 5), (3, 3), (3, 4), (3, 5), (4, 5)},
+                    'goals_latest': {(5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(7, 4), (8, 4), (7, 5), (8, 5), (7, 6), (8, 6), (9, 6), (8, 7), (9, 7), (10, 7), (9, 8), (10, 8), (11, 8), (10, 9), (11, 9), (11, 10), (12, 10), (12, 11), (13, 11), (13, 12), (14, 12), (15, 12)},
+                    'last_season': {(80, 3), (80, 4), (80, 5), (80, 6), (80, 7), (80, 8)},
+                    'goals_condition': {(1, 4), (1, 5)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (4, 5), (5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5)}
+                },
+                {
+                    'current_rank': {(7, 4), (8, 4), (7, 5), (8, 5), (7, 6), (8, 6), (9, 6), (8, 7), (9, 7), (10, 7), (9, 8), (10, 8), (11, 8), (10, 9), (11, 9), (11, 10), (12, 10), (12, 11), (13, 11), (13, 12), (14, 12), (15, 12)},
+                    'last_season': {(80, 3), (80, 4), (80, 5), (80, 6), (80, 7), (80, 8)},
+                    'goals_condition': {(2, 4), (2, 5), (2, 6), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(4, 3), (4, 4), (4, 5), (4, 6), (5, 3), (5, 4), (5, 5), (5, 6), (6, 4), (6, 5), (6, 6)}
+                },
+                {
+                    'current_rank': {(7, 4), (8, 4), (7, 5), (8, 5), (7, 6), (8, 6), (9, 6), (8, 7), (9, 7), (10, 7), (9, 8), (10, 8), (11, 8), (10, 9), (11, 9), (11, 10), (12, 10), (12, 11), (13, 11), (13, 12), (14, 12), (15, 12)},
+                    'last_season': {(80, 3), (80, 4), (80, 5), (80, 6), (80, 7), (80, 8)},
+                    'goals_condition': {(2, 3), (2, 4), (3, 2), (3, 3), (3, 4), (4, 2), (4, 3), (4, 4), (5, 5), (5, 6), (5, 7), (5, 8), (5, 9)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(7, 4), (8, 4), (7, 5), (8, 5), (7, 6), (8, 6), (9, 6), (8, 7), (9, 7), (10, 7), (9, 8), (10, 8), (11, 8), (10, 9), (11, 9), (11, 10), (12, 10), (12, 11), (13, 11), (13, 12), (14, 12), (15, 12)},
+                    'last_season': {(80, 3), (80, 4), (80, 5), (80, 6), (80, 7), (80, 8)},
+                    'goals_condition': {(4, 5), (4, 6), (4, 7), (4, 8), (4, 9)},
+                    'goals_latest': {(5, 3), (5, 4), (5, 5), (6, 3), (6, 4), (6, 5), (7, 3), (7, 4), (7, 5), (8, 3), (8, 4), (8, 5), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14)},
+                    'last_season': {(80, 3), (80, 4), (80, 5), (80, 6), (80, 7), (80, 8)},
+                    'goals_condition': {(1, 3), (1, 4), (1, 5), (1, 6), (2, 2), (2, 3), (2, 4), (2, 5), (2, 6)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (3, 3), (4, 0), (4, 1), (4, 2), (4, 3), (4, 4), (5, 1), (5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5)}
+                },
+                {
+                    'current_rank': {(1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (3, 5), (3, 6), (3, 7), (3, 8), (4, 5), (4, 6), (4, 7), (4, 8)},
+                    'last_season': {(80, 3), (80, 4), (80, 5), (80, 6), (80, 7), (80, 8)},
+                    'goals_condition': {(2, 3), (2, 4), (2, 5), (2, 6), (3, 4), (3, 5), (3, 6)},
+                    'goals_latest': {(4, 2), (4, 3), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(1, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 9), (2, 10), (2, 11), (2, 12), (2, 13), (3, 9), (3, 10), (3, 11), (3, 12), (3, 13), (4, 9), (4, 10), (4, 11), (4, 12), (4, 13)},
+                    'last_season': {(80, 3), (80, 4), (80, 5), (80, 6), (80, 7), (80, 8)},
+                    'goals_condition': {(2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(5, 1), (5, 2), (5, 3), (6, 1), (6, 2), (6, 3), (7, 2), (7, 3), (8, 1), (8, 2), (8, 3), (9, 1), (9, 2), (9, 3)}
+                },
+                {
+                    'current_rank': {(9, 12), (9, 13), (9, 14), (9, 15), (10, 12), (10, 13), (10, 14)},
+                    'last_season': {(9, 80), (10, 80), (11, 80), (12, 80), (13, 80), (14, 80)},
+                    'goals_condition': {(3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(6, 3), (6, 4), (6, 5), (6, 6), (6, 7),(7, 3), (7, 4), (7, 5), (7, 6), (7, 7), (8, 3), (8, 4), (8, 5), (8, 6), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(10, 8), (11, 8), (12, 8), (10, 9), (11, 9), (12, 9), (11, 10), (12, 10), (13, 10), (12, 11), (13, 11), (13, 12), (14, 12), (15, 12)},
+                    'last_season': {(9, 80), (10, 80), (11, 80), (12, 80), (13, 80), (14, 80)},
+                    'goals_condition': {(1, 2), (1, 3), (1, 4), (2, 4), (2, 5), (2, 6)},
+                    'goals_latest': {(5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (8, 3), (8, 4), (8, 5), (8, 6),(9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(10, 8), (11, 8), (12, 8), (10, 9), (11, 9), (12, 9), (11, 10), (12, 10), (13, 10), (12, 11), (13, 11), (13, 12), (14, 12), (15, 12)},
+                    'last_season': {(9, 80), (10, 80), (11, 80), (12, 80), (13, 80), (14, 80)},
+                    'goals_condition': {(2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(4, 4), (4, 5), (4, 6), (4, 7), (5, 4), (5, 5), (5, 6), (5, 7), (6, 4), (6, 5), (6, 6), (6, 7),(7, 4), (7, 5), (7, 6), (8, 4), (8, 5), (8, 6), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(10, 8), (11, 8), (12, 8), (10, 9), (11, 9), (12, 9), (11, 10), (12, 10), (13, 10), (12, 11), (13, 11), (13, 12), (14, 12), (15, 12)},
+                    'last_season': {(9, 80), (10, 80), (11, 80), (12, 80), (13, 80), (14, 80)},
+                    'goals_condition': {(3, 5), (3, 6), (4, 5), (4, 6), (4, 7), (5, 5), (5, 6), (5, 7)},
+                    'goals_latest': {(6, 3), (6, 4), (6, 5), (6, 6), (7, 3), (7, 4), (7, 5), (7, 6), (8, 3), (8, 4), (8, 5), (8, 6), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(7, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15)},
+                    'last_season': {(9, 80), (10, 80), (11, 80), (12, 80), (13, 80), (14, 80)},
+                    'goals_condition': {(3, 2), (3, 3), (3, 4), (4, 2), (4, 3), (4, 4), (5, 3), (5, 4), (6, 3), (6, 4)},
+                    'goals_latest': {(8, 0), (8, 1), (8, 2), (8, 3), (9, 0), (9, 1), (9, 2), (9, 3)}
+                },
+                {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (5, 17), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15)},
+                    'last_season': {(9, 80), (10, 80), (11, 80), (12, 80), (13, 80), (14, 80)},
+                    'goals_condition': {(1, 2), (1, 3), (1, 4), (1, 5), (2, 3), (2, 4), (2, 5), (2, 6), (3, 5), (3, 6)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (3, 3), (4, 0), (4, 1), (4, 2), (4, 3), (4, 4), (4, 5), (5, 2), (5, 3), (5, 4), (5, 5), (5, 6), (6, 3), (6, 4), (6, 5), (6, 6), (6, 7),(7, 3), (7, 4), (7, 5), (7, 6), (8, 4), (8, 5), (8, 6), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (5, 17), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15)},
+                    'last_season': {(9, 80), (10, 80), (11, 80), (12, 80), (13, 80), (14, 80)},
+                    'goals_condition': {(3, 3), (3, 4)},
+                    'goals_latest': {(5, 2), (5, 3), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(10, 12), (10, 13), (10, 14), (10, 15), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (12, 14), (12, 15), (12, 16), (12, 17)},
+                    'last_season': {(5, 80), (6, 80), (7, 80), (8, 80)},
+                    'goals_condition': {(1, 4), (1, 5), (1, 6), (2, 4), (2, 5), (2, 6)},
+                    'goals_latest': {(3, 2), (3, 3), (3, 4), (3, 5), (4, 3), (4, 4), (4, 5), (4, 6), (5, 3), (5, 4), (5, 5), (5, 6), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(10, 12), (10, 13), (10, 14), (10, 15), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (12, 14), (12, 15), (12, 16), (12, 17)},
+                    'last_season': {(5, 80), (6, 80), (7, 80), (8, 80)},
+                    'goals_condition': {(2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (5, 5), (5, 6), (5, 7), (5, 8)},
+                    'goals_latest': {(6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(10, 6), (10, 7), (10, 8), (10, 9), (11, 6), (11, 7), (11, 8), (11, 9), (12, 8), (12, 9), (11, 9), (12, 9), (13, 9), (11, 10), (12, 11), (13, 10), (13, 11), (13, 12), (14, 10), (14, 11), (14, 12), (14, 13), (15, 10), (15, 11), (15, 12), (15, 13), (15, 14)},
+                    'last_season': {(5, 80), (6, 80), (7, 80), (8, 80)},
+                    'goals_condition': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (3, 5), (3, 6), (4, 5), (4, 6)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (5, 3), (5, 4), (5, 5), (6, 3), (6, 4), (6, 5), (6, 6), (7, 3), (7, 4), (7, 5), (7, 6), (8, 3), (8, 4), (8, 5), (8, 6),(9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(10, 6), (10, 7), (10, 8), (10, 9), (11, 6), (11, 7), (11, 8), (11, 9), (12, 8), (12, 9), (11, 9), (12, 9), (13, 9), (11, 10), (12, 11), (13, 10), (13, 11), (13, 12), (14, 10), (14, 11), (14, 12), (14, 13), (15, 10), (15, 11), (15, 12), (15, 13), (15, 14)},
+                    'last_season': {(5, 80), (6, 80), (7, 80), (8, 80)},
+                    'goals_condition': {(3, 3), (3, 4), (4, 4), (5, 4), (5, 5), (5, 6)},
+                    'goals_latest': {(6, 3), (6, 4), (6, 5), (7, 3), (7, 4), (7, 5), (8, 3), (8, 4), (8, 5), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14)},
+                    'last_season': {(5, 80), (6, 80), (7, 80), (8, 80)},
+                    'goals_condition': {(2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 6), (4, 7), (4, 8), (4, 9)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (5, 1), (5, 2), (5, 3), (6, 1), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14)},
+                    'last_season': {(5, 80), (6, 80), (7, 80), (8, 80)},
+                    'goals_condition': {(3, 3), (3, 4), (4, 4), (4, 5)},
+                    'goals_latest': {(5, 0), (5, 1), (5, 2), (6, 0), (6, 1), (6, 2), (6, 3), (7, 1), (7, 2), (7, 3), (8, 1), (8, 2), (8, 3), (9, 1), (9, 2), (9, 3)}
+                },
+                {
+                    'current_rank': {(5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16)},
+                    'last_season': {(5, 80), (6, 80), (7, 80), (8, 80)},
+                    'goals_condition': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7)},
+                    'goals_latest': {(3, 2), (3, 3), (4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (5, 5), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6)}
+                },
+                {
+                    'current_rank': {(5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16)},
+                    'last_season': {(5, 80), (6, 80), (7, 80), (8, 80)},
+                    'goals_condition': {(3, 3), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (5, 5), (6, 3), (6, 4), (6, 5), (6, 6), (7, 3), (7, 4), (7, 5), (7, 6), (8, 3), (8, 4), (8, 5), (8, 6), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (5, 16), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (6, 16)},
+                    'last_season': {(5, 80), (6, 80), (7, 80), (8, 80)},
+                    'goals_condition': {(4, 5), (4, 6), (4, 7), (4, 8), (4, 9)},
+                    'goals_latest': {(6, 4), (6, 5), (6, 6), (6, 7),(7, 4), (7, 5), (7, 6), (7, 7), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (8, 7), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(1, 6), (1, 7), (1, 8), (1, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 11), (2, 12), (2, 13), (2, 6), (2, 7), (2, 8), (2, 9), (3, 6), (3, 7), (3, 8), (3, 9), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(5, 80), (6, 80), (7, 80), (8, 80)},
+                    'goals_condition': {(2, 2), (2, 3), (2, 4), (2, 5), (2, 6), (3, 4), (3, 5), (3, 6)},
+                    'goals_latest': {(4, 1), (4, 2), (4, 3), (5, 1), (5, 2), (5, 3), (6, 1), (6, 2), (6, 3), (7, 2), (7, 3), (8, 1), (8, 2), (8, 3), (9, 1), (9, 2), (9, 3)}
+                },
+                {
+                    'current_rank': {(1, 6), (1, 7), (1, 8), (1, 9), (1, 10), (1, 11), (1, 12), (1, 13), (2, 11), (2, 12), (2, 13), (2, 6), (2, 7), (2, 8), (2, 9), (3, 6), (3, 7), (3, 8), (3, 9), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (2, 10), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(5, 80), (6, 80), (7, 80), (8, 80)},
+                    'goals_condition': {(5, 5), (5, 6), (6, 5), (6, 6)},
+                    'goals_latest': {(7, 1), (7, 2), (7, 3), (8, 1), (8, 2), (8, 3), (9, 1), (9, 2), (9, 3)}
+                },
+                {
+                    'current_rank': {(5, 6), (5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 8), (7, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (7, 16), (8, 9), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15)},
+                    'last_season': {(2, 80), (3, 80), (4, 80)},
+                    'goals_condition': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7)},
+                    'goals_latest': {(4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (5, 5), (6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(5, 6), (5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15), (7, 8), (7, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15), (7, 16), (8, 9), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 10), (9, 11), (9, 12), (9, 13), (9, 14), (9, 15)},
+                    'last_season': {(2, 80), (3, 80), (4, 80)},
+                    'goals_condition': {(3, 1), (3, 2), (3, 3)},
+                    'goals_latest': {(6, 2), (6, 3), (6, 4), (6, 5), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (1, 14), (2, 10), (2, 11), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(2, 80), (3, 80), (4, 80)},
+                    'goals_condition': {(2, 0), (2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9)},
+                    'goals_latest': {(5, 0), (5, 1), (5, 2), (5, 3), (6, 0), (6, 1), (6, 2), (6, 3), (7, 1), (7, 2), (7, 3), (8, 1), (8, 2), (8, 3), (9, 1), (9, 2), (9, 3)}
+                },
+                {
+                    'current_rank': {(7, 8), (7, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 9), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14)},
+                    'last_season': {(8, 90), (9, 90), (10, 90), (11, 90)},
+                    'goals_condition': {(1, 2), (1, 3), (1, 4), (1, 5)},
+                    'goals_latest': {(3, 1), (3, 2), (3, 3), (4, 1), (4, 2), (4, 3), (5, 1), (5, 2), (5, 3), (5, 4)}
+                },
+                {
+                    'current_rank': {(11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (12, 14), (12, 15), (12, 16), (12, 17), (12, 18), (13, 15), (13, 16), (13, 17), (13, 18), (14, 15), (14, 16), (14, 17), (14, 18)},
+                    'last_season': {(90, 3), (90, 4), (90, 5), (90, 6), (90, 7), (90, 8), (90, 9)},
+                    'goals_condition': {(1, 2), (1, 3), (1, 4), (1, 5)},
+                    'goals_latest': {(3, 1), (3, 2), (3, 3), (4, 1), (4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4)}
+                },
+                {
+                    'current_rank': {(8, 12), (8, 13), (8, 14), (8, 15), (8, 16), (9, 12), (9, 13), (9, 14), (9, 15), (9, 16), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (10, 17), (10, 18), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (11, 17), (11, 18), (11, 19), (11, 20), (12, 14), (12, 15), (12, 16), (12, 17), (12, 18), (12, 19), (12, 20), (13, 15), (13, 16), (13, 17), (13, 18), (13, 19), (13, 20), (14, 15), (14, 16), (14, 17), (14, 18)},
+                    'last_season': {(8, 90), (9, 90), (10, 90)},
+                    'goals_condition': {(2, 4), (2, 5), (2, 6), (2, 7), (2, 8)},
+                    'goals_latest': {(3, 2), (3, 3), (3, 4), (4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (6, 5)}
+                },
+                {
+                    'current_rank': {(10, 9), (11, 6), (11, 7), (11, 8), (11, 9), (12, 9), (11, 9), (12, 9), (13, 9), (11, 10), (12, 11), (13, 10), (13, 11), (13, 12), (14, 10), (14, 11), (14, 12), (14, 13), (15, 10), (15, 11), (15, 12), (15, 13), (15, 14)},
+                    'last_season': {(8, 90), (9, 90), (10, 90)},
+                    'goals_condition': {(1, 2), (1, 3), (1, 4), (1, 5)},
+                    'goals_latest': {(3, 1), (3, 2), (3, 3), (4, 1), (4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4)}
+                },
+                {
+                    'current_rank': {(10, 6), (10, 7), (10, 8), (10, 9), (11, 6), (11, 7), (11, 8), (11, 9), (12, 8), (12, 9)},
+                    'last_season': {(3, 90), (4, 90), (5, 90), (6, 90), (7, 90)},
+                    'goals_condition': {(3, 2), (3, 3), (3, 4), (4, 2), (4, 3), (4, 4)},
+                    'goals_latest': {(6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(10, 6), (10, 7), (10, 8), (10, 9), (11, 6), (11, 7), (11, 8), (11, 9), (12, 8), (12, 9)},
+                    'last_season': {(3, 90), (4, 90), (5, 90), (6, 90), (7, 90)},
+                    'goals_condition': {(5, 4), (5, 5), (5, 6), (6, 5), (6, 6), (6, 7)},
+                    'goals_latest': {(7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (8, 10), (8, 11), (8, 12), (8, 13), (8, 14)},
+                    'last_season': {(3, 90), (4, 90), (5, 90), (6, 90), (7, 90)},
+                    'goals_condition': {(3, 4), (3, 5), (3, 6), (4, 5), (4, 6), (4, 7)},
+                    'goals_latest': {(6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(7, 4), (7, 5), (8, 4), (8, 5), (9, 5), (9, 6), (9, 7)},
+                    'last_season': {(3, 90), (4, 90), (5, 90), (6, 90), (7, 90)},
+                    'goals_condition': {(3, 3), (3, 4), (3, 5), (3, 6), (3, 7), (4, 3), (4, 4), (4, 5), (4, 6), (4, 7)},
+                    'goals_latest': {(7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 3), (8, 4), (8, 5), (8, 6), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14)},
+                    'last_season': {(8, 90), (9, 90), (10, 90), (11, 90), (12, 90), (13, 90)},
+                    'goals_condition': {(1, 3), (1, 4), (1, 5), (2, 4), (2, 5), (2, 6), (3, 4), (3, 5), (3, 6)},
+                    'goals_latest': {(2, 1), (2, 2), (2, 3), (3, 2), (3, 3), (3, 4), (3, 5), (4, 2), (4, 3), (4, 4), (5, 3), (5, 4), (5, 5), (6, 3), (6, 4), (6, 5), (7, 3), (7, 4), (7, 5), (7, 6), (8, 3), (8, 4), (8, 5), (8, 6), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(1, 10), (1, 11), (1, 9), (1, 8), (1, 7), (2, 11), (2, 10), (2, 9), (2, 8), (2, 7), (3, 12), (3, 13), (3, 14), (3, 11), (3, 10), (3, 8), (3, 9), (3, 7), (4, 14), (4, 13), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8), (4, 7)},
+                    'last_season': {(8, 90), (9, 90), (10, 90)},
+                    'goals_condition': {(4, 6), (4, 7), (5, 5), (5, 6), (5, 7), (6, 6), (6, 5), (6, 7)},
+                    'goals_latest': {(7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14)},
+                    'last_season': {(90, 10), (90, 11), (90, 12), (90, 13), (90, 14), (90, 15), (90, 16), (90, 17), (90, 18)},
+                    'goals_condition': {(1, 2), (1, 3), (1, 4), (1, 5), (2, 4), (2, 5), (2, 6), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(4, 1), (4, 2), (4, 3), (4, 4), (5, 1), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(1, 10), (1, 11), (1, 12), (2, 11), (2, 10), (2, 12), (2, 13), (2, 14), (3, 15), (3, 16), (3, 13), (3, 14), (3, 12), (3, 11), (3, 10), (4, 14), (4, 13), (4, 12), (4, 11), (4, 10), (4, 15), (4, 16)},
+                    'last_season': {(90, 10), (90, 11), (90, 12), (90, 13), (90, 14), (90, 15), (90, 16), (90, 17), (90, 18)},
+                    'goals_condition': {(1, 3), (1, 4), (1, 5), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (3, 3), (3, 4), (3, 5), (3, 6), (3, 7)},
+                    'goals_latest': {(4, 0), (4, 1), (4, 2), (4, 3), (5, 0), (5, 1), (5, 2), (5, 3), (5, 4), (6, 0), (6, 1), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (7, 5), (8, 2), (8, 3), (8, 4), (8, 5), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 5), (4, 6), (4, 7), (4, 8), (4, 9)},
+                    'last_season': {(90, 10), (90, 11), (90, 12), (90, 13), (90, 14), (90, 15), (90, 16), (90, 17), (90, 18)},
+                    'goals_condition': {(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (3, 3), (3, 4), (3, 5), (3, 6), (3, 7)},
+                    'goals_latest': {(7, 1), (7, 2), (7, 3), (8, 1), (8, 2), (8, 3), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(9, 11), (9, 12), (9, 13), (9, 14), (9, 15), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15)},
+                    'last_season': {(90, 3), (90, 4), (90, 5), (90, 6), (90, 7), (90, 8), (90, 9)},
+                    'goals_condition': {(3, 6), (3, 7), (3, 8), (4, 6), (4, 7), (4, 8), (5, 6), (5, 7), (5, 8)},
+                    'goals_latest': {(5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (7, 7), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(9, 11), (9, 12), (9, 13), (9, 14), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 14), (12, 15), (12, 16), (12, 17)},
+                    'last_season': {(90, 10), (90, 11), (90, 12), (90, 13), (90, 14), (90, 15), (90, 16), (90, 17), (90, 18)},
+                    'goals_condition': {(2, 6), (2, 7), (2, 8), (2, 9), (3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(5, 4), (5, 5), (5, 6), (5, 7), (6, 4), (6, 5), (6, 6), (6, 7),(7, 4), (7, 5), (7, 6), (7, 7), (8, 4), (8, 5), (8, 6), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(9, 11), (9, 12), (9, 13), (9, 14), (10, 11), (10, 12), (10, 13), (10, 14), (10, 15), (10, 16), (11, 12), (11, 13), (11, 14), (11, 15), (11, 16), (12, 14), (12, 15), (12, 16), (12, 17)},
+                    'last_season': {(90, 10), (90, 11), (90, 12), (90, 13), (90, 14), (90, 15), (90, 16), (90, 17), (90, 18)},
+                    'goals_condition': {(2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (3, 3), (3, 4), (3, 5), (3, 6)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (4, 0), (4, 1), (4, 2), (4, 3), (5, 1), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14)},
+                    'last_season': {(3, 90), (4, 90), (5, 90), (6, 90), (7, 90)},
+                    'goals_condition': {(1, 2), (1, 3), (1, 4), (1, 5), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7)},
+                    'goals_latest': {(3, 1), (3, 2), (3, 3), (4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4), (9, 5)}
+                },
+                {
+                    'current_rank': {(6, 5), (7, 5), (8, 5), (9, 5), (9, 6), (9, 7)},
+                    'last_season': {(3, 90), (4, 90), (5, 90), (6, 90), (7, 90)},
+                    'goals_condition': {(2, 4), (2, 5), (2, 6), (3, 3), (3, 4), (3, 5), (3, 6), (4, 4), (4, 5), (4, 6)},
+                    'goals_latest': {(7, 3), (7, 4), (7, 5), (7, 6), (8, 3), (8, 4), (8, 5), (8, 6), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(1, 9), (1, 8), (1, 7), (1, 6), (1, 5), (1, 4), (1, 3), (2, 10), (2, 4), (2, 9), (2, 8), (2, 7), (2, 6), (2, 5), (3, 12), (3, 13), (3, 14), (3, 11), (3, 10), (3, 8), (3, 9), (3, 7), (3, 6), (4, 14), (4, 13), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8), (4, 7), (4, 6)},
+                    'last_season': {(3, 90), (4, 90), (5, 90), (6, 90), (7, 90)},
+                    'goals_condition': {(1, 3), (1, 4), (1, 5)},
+                    'goals_latest': {(3, 1), (3, 2), (3, 3), (4, 2), (4, 3), (5, 2), (5, 3), (5, 4), (6, 3), (6, 4), (6, 5)}
+                },
+                {
+                    'current_rank': {(1, 9), (1, 8), (1, 7), (1, 6), (1, 5), (1, 4), (1, 3), (2, 10), (2, 4), (2, 9), (2, 8), (2, 7), (2, 6), (2, 5), (3, 12), (3, 13), (3, 14), (3, 11), (3, 10), (3, 8), (3, 9), (3, 7), (3, 6), (4, 14), (4, 13), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8), (4, 7), (4, 6)},
+                    'last_season': {(3, 90), (4, 90), (5, 90), (6, 90), (7, 90)},
+                    'goals_condition': {(4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4)},
+                    'goals_latest': {(7, 0), (7, 1), (7, 2), (8, 0), (8, 1), (8, 2), (9, 0), (9, 1), (9, 2)}
+                },
+                {
+                    'current_rank': {(1, 9), (1, 8), (1, 7), (1, 6), (1, 5), (1, 4), (1, 3), (2, 10), (2, 4), (2, 9), (2, 8), (2, 7), (2, 6), (2, 5), (3, 12), (3, 13), (3, 14), (3, 11), (3, 10), (3, 8), (3, 9), (3, 7), (3, 6), (4, 14), (4, 13), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8), (4, 7), (4, 6)},
+                    'last_season': {(3, 90), (4, 90), (5, 90), (6, 90), (7, 90)},
+                    'goals_condition': {(4, 5), (4, 6), (4, 7), (4, 8), (4, 9), (5, 5), (5, 6), (5, 7), (5, 8), (5, 9)},
+                    'goals_latest': {(6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(7, 6), (8, 6), (9, 6), (9, 7), (8, 7), (10, 6), (10, 7), (10, 8), (10, 9), (11, 6), (11, 7), (11, 8), (11, 9), (12, 8), (12, 9)},
+                    'last_season': {(90, 3), (90, 4), (90, 5), (90, 6), (90, 7), (90, 8), (90, 9)},
+                    'goals_condition': {(1, 2), (1, 3), (1, 4), (1, 5)},
+                    'goals_latest': {(2, 0), (2, 1), (2, 2), (2, 3), (3, 0), (3, 1), (3, 2), (3, 3), (4, 1), (4, 2), (4, 3), (5, 2), (5, 3), (5, 4)}
+                },
+                {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15)},
+                    'last_season': {(90, 3), (90, 4), (90, 5), (90, 6), (90, 7), (90, 8), (90, 9)},
+                    'goals_condition': {(1, 2), (1, 3), (1, 4), (1, 5), (2, 2), (2, 3), (2, 4), (2, 5)},
+                    'goals_latest': {(3, 0), (3, 1), (3, 2), (3, 3), (4, 0), (4, 1), (4, 2), (4, 3), (4, 4), (5, 2), (5, 3), (5, 4), (6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 2), (8, 3), (8, 4), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(5, 7), (5, 8), (5, 9), (5, 10), (5, 11), (5, 12), (5, 13), (5, 14), (5, 15), (6, 7), (6, 8), (6, 9), (6, 10), (6, 11), (6, 12), (6, 13), (6, 14), (6, 15)},
+                    'last_season': {(90, 3), (90, 4), (90, 5), (90, 6), (90, 7), (90, 8), (90, 9)},
+                    'goals_condition': {(3, 3), (3, 4), (3, 5), (4, 3), (4, 4), (4, 5)},
+                    'goals_latest': {(6, 2), (6, 3), (6, 4), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(1, 12), (1, 11), (1, 10), (1, 9), (1, 8), (1, 7), (1, 6), (1, 5), (1, 4), (2, 11), (2, 13), (2, 12), (2, 10), (2, 3), (2, 4), (2, 9), (2, 8), (2, 7), (2, 6), (2, 5), (3, 12), (3, 13), (3, 14), (3, 15), (3, 11), (3, 10), (3, 8), (3, 9), (3, 7), (3, 6), (4, 15), (4, 16), (4, 14), (4, 13), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8), (4, 7), (4, 6)},
+                    'last_season': {(90, 3), (90, 4), (90, 5), (90, 6), (90, 7), (90, 8), (90, 9)},
+                    'goals_condition': {(0, 3), (0, 4), (0, 5), (1, 2), (1, 3), (1, 4), (1, 5), (2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 1), (3, 2), (3, 3)},
+                    'goals_latest': {(5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(1, 12), (1, 11), (1, 10), (1, 9), (1, 8), (1, 7), (1, 6), (1, 5), (1, 4), (2, 11), (2, 13), (2, 12), (2, 10), (2, 3), (2, 4), (2, 9), (2, 8), (2, 7), (2, 6), (2, 5), (3, 12), (3, 13), (3, 14), (3, 15), (3, 11), (3, 10), (3, 8), (3, 9), (3, 7), (3, 6), (4, 15), (4, 16), (4, 14), (4, 13), (4, 12), (4, 11), (4, 10), (4, 9), (4, 8), (4, 7), (4, 6)},
+                    'last_season': {(90, 3), (90, 4), (90, 5), (90, 6), (90, 7), (90, 8), (90, 9)},
+                    'goals_condition': {(3, 4), (3, 5), (3, 6), (3, 7), (3, 8)},
+                    'goals_latest': {(6, 1), (6, 2), (6, 3), (6, 4), (6, 5), (6, 6), (7, 1), (7, 2), (7, 3), (7, 4), (7, 5), (7, 6), (8, 1), (8, 2), (8, 3), (8, 4), (8, 5), (8, 6), (9, 1), (9, 2), (9, 3), (9, 4), (9, 5), (9, 6)}
+                },
+                {
+                    'current_rank': {(1, 6), (1, 5), (1, 4), (1, 3), (2, 3), (2, 4), (2, 6), (2, 5), (3, 4), (3, 5), (3, 6), (4, 5), (4, 7), (4, 6)},
+                    'last_season': {(90, 3), (90, 4), (90, 5), (90, 6), (90, 7), (90, 8), (90, 9)},
+                    'goals_condition': {(4, 1), (4, 2), (4, 3), (4, 4), (4, 5), (5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 3), (6, 4), (6, 5)},  
+                    'goals_latest': {(9, 0), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (1, 14), (2, 10), (2, 11), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(2, 80), (3, 80), (4, 80)},
+                    'goals_condition': {(3, 2), (3, 3), (3, 4)},
+                    'goals_latest': {(6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4)}
+                },
+                {
+                    'current_rank': {(1, 6), (1, 7), (1, 8), (1, 9), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8), (2, 9), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9), (4, 6), (4, 7), (4, 8), (4, 9), (1, 10), (1, 11), (1, 12), (1, 13), (1, 14), (2, 10), (2, 11), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14), (4, 10), (4, 11), (4, 12), (4, 13), (4, 14)},
+                    'last_season': {(2, 80), (3, 80), (4, 80)},
+                    'goals_condition': {(3, 5), (3, 6), (3, 7), (3, 8), (3, 9)},
+                    'goals_latest': {(5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4)}
+                }
+            ]
+            
+            for match_data in matches_batch:
+                try:
+                    league_id = match_data.get('league_id')
+                    season = match_data.get('season')
+                    
+                    if not season:
+                        season = datetime.now().year
+                    
+                    try:
+                        season = int(season)
+                        last_season = season - 1
+                    except:
+                        continue
+
+                    home_team_id = match_data.get('home_team_id')
+                    away_team_id = match_data.get('away_team_id')
+                    
+                    home_current_data = self.fetch_team_standings_with_cache(home_team_id, league_id, season)
+                    away_current_data = self.fetch_team_standings_with_cache(away_team_id, league_id, season)
+                    
+                    if not home_current_data or not away_current_data:
+                        continue
+
+                    home_current_rank = home_current_data.get('current_rank', 'N/A')
+                    away_current_rank = away_current_data.get('current_rank', 'N/A')
+                    
+                    home_last_data = self._fetch_last_season_standings_with_cache(home_team_id, league_id, last_season)
+                    away_last_data = self._fetch_last_season_standings_with_cache(away_team_id, league_id, last_season)
+                    
+                    home_last_rank = home_last_data.get('current_rank', 'N/A') if home_last_data else 'N/A'
+                    away_last_rank = away_last_data.get('current_rank', 'N/A') if away_last_data else 'N/A'
+                    
+                    if home_last_rank in ("N/A", "NEW") or away_last_rank in ("N/A", "NEW"):
+                        continue
+                    
+                    time_str = match_data.get('time', '')
+                    match_date = ""
+                    if time_str:
+                        try:
+                            dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                            match_date = dt.strftime('%Y-%m-%d')
+                        except:
+                            match_date = datetime.now().strftime('%Y-%m-%d')
+                    
+                    home_goals_data = self.get_team_goals_from_cache(home_team_id, league_id, season, True, match_date)
+                    home_goals_for = home_goals_data.get('goals_for', 0) if home_goals_data else 0
+                    home_goals_against = home_goals_data.get('goals_against', 0) if home_goals_data else 0
+                    
+                    away_goals_data = self.get_team_goals_from_cache(away_team_id, league_id, season, False, match_date)
+                    away_goals_for = away_goals_data.get('goals_for', 0) if away_goals_data else 0
+                    away_goals_against = away_goals_data.get('goals_against', 0) if away_goals_data else 0
+                    
+                    def clean_rank(rank_str):
+                        if rank_str == 'N/A' or rank_str == 'NEW':
+                            return 0
+                        digits = ''.join(filter(str.isdigit, str(rank_str)))
+                        return int(digits) if digits else 0
+                    
+                    ch = clean_rank(home_current_rank)
+                    ca = clean_rank(away_current_rank)
+                    lh = clean_rank(home_last_rank)
+                    la = clean_rank(away_last_rank)
+                    
+                    current_pair = (ch, ca)
+                    last_pair = (lh, la)
+                    current_pair_rev = (ca, ch)
+                    last_pair_rev = (la, lh)
+                    
+                    matched = False
+                    for group in forbidden_groups:
+                        # جميع الشروط الأربعة
+                        normal_match = (current_pair in group['current_rank']) and (last_pair in group['last_season']) \
+                                       and ((away_goals_for, away_goals_against) in group['goals_condition']) \
+                                       and ((home_goals_for, home_goals_against) in group['goals_latest'])
+                        
+                        reversed_match = (current_pair_rev in group['current_rank']) and (last_pair_rev in group['last_season']) \
+                                         and ((home_goals_for, home_goals_against) in group['goals_condition']) \
+                                         and ((away_goals_for, away_goals_against) in group['goals_latest'])
+                        
+                        if normal_match or reversed_match:
+                            matched = True
+                            break
+                    
+                    if not matched:
+                        self._auto_save_to_favorites_if_not_exists(match_data, "perfect_2_2", "Conditions not all met")
+                        filtered_matches.append(match_data)
+                        
+                except Exception as e:
+                    print(f"NS Perfect 2_2 Filter Error for match {match_data.get('id')}: {e}")
+                    continue
+            
+            return filtered_matches
+            
+        except Exception as e:
+            print(f"❌ ERROR in filter_ns_perfect_2_2_batch: {e}")
+            return []
+
+    def _get_team_goals_with_against(self, team_id, league_id, season, is_home_team, match_date=None):
+        """جلب أهداف for و against معاً"""
+        try:
+            if not match_date:
+                match_date = datetime.now().strftime('%Y-%m-%d')
+            
+            cached_data = self.get_team_goals_from_cache(team_id, league_id, season, is_home_team, match_date)
+            
+            if cached_data:
+                goals_for = cached_data.get('goals_for', 0)
+                goals_against = cached_data.get('goals_against', 0)
+                return goals_for, goals_against
+            
+            print(f"🌐 جلب الأهداف للفلتر من API للفريق {team_id}")
+            stats = self._fetch_team_last_3_matches(team_id, league_id, season, is_home_team)
+            
+            if stats:
+                stats_dict = self._parse_stats_to_dict(stats)
+                if stats_dict:
+                    goals_for = stats_dict.get('goals_for', 0)
+                    goals_against = stats_dict.get('goals_against', 0)
+                    return goals_for, goals_against
+            
+            return None, None
+                
+        except Exception as e:
+            print(f"Error in _get_team_goals_with_against for team {team_id}: {e}")
+            return None, None
+
+    def _auto_save_to_favorites_if_not_exists(self, match_data, filter_type, filter_result):
+        """حفظ المباراة تلقائياً في المفضلة باستخدام set للتحقق السريع"""
+        try:
+            match_id = match_data.get('id')
+            
+            # ✅ تحديث: تحميل المفضلة أولاً للتأكد من البيانات الحالية
+            self.load_favorites()
+            
+            # استخدام set للتحقق السريع
+            favorite_ids = {f.get('id') for f in self.favorites}
+            
+            # التحقق إذا كانت المباراة موجودة بالفعل في المفضلة
+            if match_id in favorite_ids:
+                print(f"ℹ️ المباراة موجودة بالفعل في المفضلة: {match_id}")
+                return False
+            
+            # إضافة معلومات الفلتر إلى بيانات المباراة
+            enhanced_match_data = match_data.copy()
+            enhanced_match_data['auto_saved_by_filter'] = filter_type
+            enhanced_match_data['filter_result'] = filter_result
+            enhanced_match_data['saved_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # إضافة المباراة إلى المفضلة
+            self.favorites.append(enhanced_match_data)
+            self.save_favorites()  # ✅ حفظ فوري في قاعدة البيانات
+            
+            # تحديث set للاستخدام المستقبلي
+            favorite_ids.add(match_id)
+            
+            # عرض إشعار للمستخدم
+            home_team = match_data.get('home_team', 'Unknown')
+            away_team = match_data.get('away_team', 'Unknown')
+            
+            self.show_snackbar(
+                f"⭐ تم حفظ المباراة تلقائياً بواسطة فلتر {filter_type}: {home_team} vs {away_team}",
+                duration=4
+            )
+            
+            print(f"✅ تم حفظ المباراة تلقائياً بواسطة فلتر {filter_type}: {match_id}")
+            
+            # ✅ تحديث الواجهة فوراً إذا كان في تبويب المفضلة
+            if self.current_tab == 'favorites':
+                Clock.schedule_once(lambda dt: self.show_favorites(), 0.1)
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ خطأ في الحفظ التلقائي للمباراة: {e}")
+            return False
+
     def _get_team_goals_for_filter_with_cache(self, team_id, league_id, season, is_home_team, match_date=None):
         """جلب الأهداف للفلتر مع استخدام الكاش المحسن"""
         try:
@@ -2591,6 +3989,16 @@ class ProfessionalFootballApp(MDApp):
             print(f"Error fetching all league teams: {e}")
             return None
 
+    def is_hidden(self, match_id):
+        # استخدام set للتحقق السريع بدلاً من list
+        hidden_ids = {m.get('id') for m in self.hidden_matches}
+        return match_id in hidden_ids
+
+    def is_favorite(self, match_id):
+        # استخدام set للتحقق السريع بدلاً من list
+        favorite_ids = {f.get('id') for f in self.favorites}
+        return match_id in favorite_ids
+
     def load_favorites(self):
         self.favorites = self.storage.load_favorites()
 
@@ -2620,6 +4028,13 @@ class ProfessionalFootballApp(MDApp):
         self.save_filter_state()
         status = "Enabled" if self.filter_ns_perfect_1_1_enabled else "Disabled"
         self.show_snackbar(f"NS Filter (Perfect 1_1) is now {status}")
+        self.show_profile()
+
+    def toggle_filter_ns_perfect_2_2(self):
+        self.filter_ns_perfect_2_2_enabled = not self.filter_ns_perfect_2_2_enabled
+        self.save_filter_state()
+        status = "Enabled" if self.filter_ns_perfect_2_2_enabled else "Disabled"
+        self.show_snackbar(f"NS Filter (Perfect 2_2) is now {status}")
         self.show_profile()
 
     def on_calendar_date_selected(self, selected_date):
@@ -2785,6 +4200,7 @@ class ProfessionalFootballApp(MDApp):
 
     @mainthread
     def display_calendar_matches_improved(self, matches, target_date):
+        """عرض المباريات المجدولة مع تطبيق الفلترات بالدفعات"""
         container = self.root.ids.main_list
         container.clear_widgets()
         
@@ -2805,31 +4221,70 @@ class ProfessionalFootballApp(MDApp):
         container.add_widget(header)
         
         if matches:
-            matches = self.filter_out_hidden_matches_immediately(matches)
+            # استخدام set لإزالة التكرارات فوراً
+            seen_ids = set()
+            unique_matches = []
+            
+            for match in matches:
+                match_id = match.get('id')
+                if match_id and match_id not in seen_ids:
+                    seen_ids.add(match_id)
+                    unique_matches.append(match)
+            
+            print(f"✅ إزالة التكرارات: {len(matches)} -> {len(unique_matches)} مباراة")
             
             required_league_ids = self.get_required_league_ids()
             
             if required_league_ids:
+                # استخدام set للفلترة السريعة
+                required_ids_set = set(required_league_ids)
                 filtered_matches = [
-                    match for match in matches
-                    if match.get('league_id') in required_league_ids
+                    match for match in unique_matches
+                    if match.get('league_id') in required_ids_set
                 ]
                 print(f"🔍 بعد التصفية حسب الدوري: {len(filtered_matches)} مباراة مجدولة")
             else:
-                filtered_matches = matches
+                filtered_matches = unique_matches
 
-            final_matches_filtered = []
+            # تطبيق الفلترات بالدفعات
+            batch_size = 600
+            total_matches = len(filtered_matches)
             
             if self.filter_ns_perfect_1_1_enabled:
-                print(f"🎯 تطبيق فلتر NS Perfect 1_1 على {len(filtered_matches)} مباراة")
-                temp_filtered = []
-                for match in filtered_matches:
-                    if match.get('status') in ['NS', 'TBD']:
-                        filter_result = self.filter_ns_perfect_1_1(match)
-                        if "✅ yes" in filter_result:
-                            temp_filtered.append(match)
-                filtered_matches = temp_filtered
+                print(f"🎯 تطبيق فلتر NS Perfect 1_1 على {len(filtered_matches)} مباراة بالدفعات (كل دفعة {batch_size})")
+                
+                filtered_by_1_1 = []
+                for i in range(0, total_matches, batch_size):
+                    batch = filtered_matches[i:i + batch_size]
+                    print(f"🔍 معالجة دفعة {i//batch_size + 1}: {len(batch)} مباراة")
+                    
+                    batch_filtered = self.filter_ns_perfect_1_1_batch(batch)
+                    filtered_by_1_1.extend(batch_filtered)
+                    
+                    # تحديث الواجهة بين الدفعات
+                    Clock.schedule_once(lambda dt, progress=((i + len(batch)) / total_matches * 100): 
+                        self.show_loading(f"Filtering NS Perfect 1_1... {int(progress)}%", progress), 0)
+                
+                filtered_matches = filtered_by_1_1
                 print(f"🎯 بعد تطبيق فلتر NS Perfect 1_1: {len(filtered_matches)} مباراة")
+            
+            if self.filter_ns_perfect_2_2_enabled:
+                print(f"🎯 تطبيق فلتر NS Perfect 2_2 على {len(filtered_matches)} مباراة بالدفعات (كل دفعة {batch_size})")
+                
+                filtered_by_2_2 = []
+                for i in range(0, len(filtered_matches), batch_size):
+                    batch = filtered_matches[i:i + batch_size]
+                    print(f"🔍 معالجة دفعة {i//batch_size + 1}: {len(batch)} مباراة")
+                    
+                    batch_filtered = self.filter_ns_perfect_2_2_batch(batch)
+                    filtered_by_2_2.extend(batch_filtered)
+                    
+                    # تحديث الواجهة بين الدفعات
+                    Clock.schedule_once(lambda dt, progress=((i + len(batch)) / total_matches * 100): 
+                        self.show_loading(f"Filtering NS Perfect 2_2... {int(progress)}%", progress), 0)
+                
+                filtered_matches = filtered_by_2_2
+                print(f"🎯 بعد تطبيق فلتر NS Perfect 2_2: {len(filtered_matches)} مباراة")
             
             final_matches = self.filter_out_hidden_and_favorite_matches(filtered_matches)
             print(f"🚫 النتيجة النهائية: {len(final_matches)} مباراة مجدولة")
@@ -2837,7 +4292,9 @@ class ProfessionalFootballApp(MDApp):
             if final_matches:
                 filter_info = []
                 if self.filter_ns_perfect_1_1_enabled:
-                    filter_info.append("NS Perfect 1_1 (API)")
+                    filter_info.append("NS Perfect 1_1 (Batch)")
+                if self.filter_ns_perfect_2_2_enabled:
+                    filter_info.append("NS Perfect 2_2 (Batch)")
                 
                 if filter_info:
                     filter_label = MDLabel(
@@ -2872,17 +4329,19 @@ class ProfessionalFootballApp(MDApp):
                 self.show_load_more_button(container, matches_by_league)
                 
             else:
-                no_matches_text = "No scheduled matches found"
+                no_matches_text = "terminé"
                 if required_league_ids:
-                    no_matches_text += " with current league filters"
+                    no_matches_text += " with current league"
                 filter_texts = []
                 if self.filter_ns_perfect_1_1_enabled:
-                    filter_texts.append("NS Perfect 1_1 (API)")
+                    filter_texts.append("NS Perfect 1_1 (Batch)")
+                if self.filter_ns_perfect_2_2_enabled:
+                    filter_texts.append("NS Perfect 2_2 (Batch)")
                 if filter_texts:
-                    no_matches_text += f" and filters: {' + '.join(filter_texts)}"
+                    no_matches_text += f": {' + '.join(filter_texts)}"
                 self.show_empty_message(no_matches_text)
         else:
-            self.show_empty_message(f"No scheduled matches found for {target_date.strftime('%d/%m/%Y')}")
+            self.show_empty_message(f"matches found for {target_date.strftime('%d/%m/%Y')}")
 
     def show_load_more_button(self, container, leagues_list):
         """عرض زر تحميل المزيد"""
@@ -3192,9 +4651,6 @@ class ProfessionalFootballApp(MDApp):
         else:
             return 'home', 'away'
 
-    def is_hidden(self, match_id):
-        return any(m.get('id') == match_id for m in self.hidden_matches)
-
     def add_hidden_match(self, match):
         if not self.is_hidden(match.get('id')):
             self.hidden_matches.append(match.copy())
@@ -3212,9 +4668,6 @@ class ProfessionalFootballApp(MDApp):
         self.filtered_matches = [m for m in self.filtered_matches if m.get('id') != match_id]
         
         print(f"🗑️ تمت إزالة المباراة {match_id} من جميع القوائم الداخلية")
-
-    def is_favorite(self, match_id):
-        return any(f.get('id') == match_id for f in self.favorites)
 
     def add_favorite(self, match):
         if not self.is_favorite(match.get('id')):
@@ -3707,25 +5160,61 @@ class ProfessionalFootballApp(MDApp):
             container.add_widget(item)
 
     def show_favorites(self):
+        """عرض المباريات المفضلة - تم تحديثها لقراءة من قاعدة البيانات"""
         container = self.root.ids.main_list
         container.clear_widgets()
         
-        all_available_matches = list({m['id']: m for m in self.matches + self.today_matches}.values())
-
-        fav_matches_data = [m for m in all_available_matches 
-                           if self.is_favorite(m.get('id')) and not self.is_hidden(m.get('id'))]
+        # ✅ تحديث مهم: إعادة تحميل المفضلة من قاعدة البيانات
+        self.load_favorites()  # تأكد من جلب أحدث البيانات
         
-        fav_leagues_data = self.favorite_leagues
+        # الآن favorites تحتوي على كل المباريات المحفوظة
+        fav_matches_data = self.favorites.copy()  # نسخة من البيانات
         
-        has_favorites = len(fav_matches_data) > 0 or len(fav_leagues_data) > 0
+        # 🔧 فصل المباريات المحفوظة تلقائياً عن المحفوظة يدوياً
+        auto_saved_matches = [m for m in fav_matches_data if m.get('auto_saved_by_filter')]
+        normal_fav_matches = [m for m in fav_matches_data if not m.get('auto_saved_by_filter')]
+        
+        has_favorites = len(fav_matches_data) > 0
         
         if has_favorites:
-            if fav_matches_data:
-                matches_header = OneLineListItem(text="⭐ FAVORITE MATCHES")
+            # عرض المباريات المحفوظة تلقائياً أولاً
+            if auto_saved_matches:
+                auto_header = OneLineListItem(text="🤖 AUTO-SAVED BY FILTER")
+                auto_header.md_bg_color = get_color_from_hex("#E1F5FE")
+                container.add_widget(auto_header)
+                
+                for match in auto_saved_matches:
+                    item = OptimizedCompactMatchItem(
+                        match_data=match, 
+                        is_fav=True  # ✅ تأكد أنها تعرض كـ favorite
+                    )
+                    # إضافة معلومة الفلتر
+                    if match.get('auto_saved_by_filter'):
+                        filter_info = MDLabel(
+                            text=f"فلتر: {match.get('auto_saved_by_filter')} | {match.get('saved_at', '')}",
+                            font_style='Caption',
+                            theme_text_color='Secondary',
+                            size_hint_y=None,
+                            height=dp(20)
+                        )
+                        container.add_widget(filter_info)
+                    container.add_widget(item)
+            
+            # عرض المباريات المحفوظة يدوياً
+            if normal_fav_matches:
+                matches_header = OneLineListItem(text="⭐ FAVORITE MATCHES (MANUAL)")
                 matches_header.md_bg_color = get_color_from_hex("#FFF8E1")
                 container.add_widget(matches_header)
-                self.populate_matches(fav_matches_data, container)
+                for match in normal_fav_matches:
+                    item = OptimizedCompactMatchItem(
+                        match_data=match, 
+                        is_fav=True
+                    )
+                    container.add_widget(item)
             
+            # عرض الدوريات المفضلة
+            self.load_favorite_leagues()  # تأكد من جلب أحدث البيانات
+            fav_leagues_data = self.favorite_leagues
             if fav_leagues_data:
                 leagues_header = OneLineListItem(text="🏆 FAVORITE LEAGUES")
                 leagues_header.md_bg_color = get_color_from_hex("#E8F5E8")
@@ -3766,7 +5255,7 @@ class ProfessionalFootballApp(MDApp):
         elif tab_name == 'favorites':
             self.current_title = 'My Favorites'
             self.calendar_mode = False
-            self.show_favorites()
+            Clock.schedule_once(lambda dt: self.show_favorites(), 0.1)  # ✅ تحديث تلقائي
         elif tab_name == 'leagues':
             self.current_title = 'Leagues'
             self.calendar_mode = False
@@ -3958,30 +5447,88 @@ class ProfessionalFootballApp(MDApp):
         
         filter_buttons_box = MDBoxLayout(orientation='vertical', spacing=dp(10), size_hint_y=None, height=dp(320))
         
-        btn_ns_filter_1_1 = MDBoxLayout(
+        btn_ns_filter = MDBoxLayout(
             orientation='horizontal',
             size_hint_y=None,
             height=dp(40),
             padding=dp(5),
             spacing=dp(10)
         )
-        btn_ns_filter_1_1_label = MDLabel(
-            text="(Standing_ N/A or change league )",
+        btn_ns_filter_label = MDLabel(
+            text="📅 NS Filter (Perfect 1_1) for Calendar",
             theme_text_color='Primary',
             halign='left',
             valign='center',
             size_hint_x=0.8
         )
-        btn_ns_filter_1_1_icon = MDIconButton(
+        btn_ns_filter_icon = MDIconButton(
             icon= "checkbox-marked" if self.filter_ns_perfect_1_1_enabled else "checkbox-blank-outline",
             theme_text_color='Custom',
             text_color=get_color_from_hex("#4CAF50") if self.filter_ns_perfect_1_1_enabled else get_color_from_hex("#757575"),
             on_release=lambda x: self.toggle_filter_ns_perfect_1_1(),
             size_hint_x=0.2
         )
-        btn_ns_filter_1_1.add_widget(btn_ns_filter_1_1_label)
-        btn_ns_filter_1_1.add_widget(btn_ns_filter_1_1_icon)
-        filter_buttons_box.add_widget(btn_ns_filter_1_1)
+        btn_ns_filter.add_widget(btn_ns_filter_label)
+        btn_ns_filter.add_widget(btn_ns_filter_icon)
+        filter_buttons_box.add_widget(btn_ns_filter)
+        
+        btn_ns_filter_2_2 = MDBoxLayout(
+            orientation='horizontal',
+            size_hint_y=None,
+            height=dp(40),
+            padding=dp(5),
+            spacing=dp(10)
+        )
+        btn_ns_filter_2_2_label = MDLabel(
+            text="📅 NS Filter (Perfect 2_2) for Calendar",
+            theme_text_color='Primary',
+            halign='left',
+            valign='center',
+            size_hint_x=0.8
+        )
+        btn_ns_filter_2_2_icon = MDIconButton(
+            icon= "checkbox-marked" if self.filter_ns_perfect_2_2_enabled else "checkbox-blank-outline",
+            theme_text_color='Custom',
+            text_color=get_color_from_hex("#4CAF50") if self.filter_ns_perfect_2_2_enabled else get_color_from_hex("#757575"),
+            on_release=lambda x: self.toggle_filter_ns_perfect_2_2(),
+            size_hint_x=0.2
+        )
+        btn_ns_filter_2_2.add_widget(btn_ns_filter_2_2_label)
+        btn_ns_filter_2_2.add_widget(btn_ns_filter_2_2_icon)
+        filter_buttons_box.add_widget(btn_ns_filter_2_2)
+        
+        btn_condition1 = MDRaisedButton(
+            text="🔍 Condition 1: One Team Scored/No Goals",
+            on_release=lambda x: self.apply_filter_condition_1(),
+            size_hint_y=None,
+            height=dp(40)
+        )
+        filter_buttons_box.add_widget(btn_condition1)
+        
+        btn_condition2 = MDRaisedButton(
+            text="🎯 Condition 2: Loser Scored More (Last 3)",
+            on_release=lambda x: self.apply_filter_condition_2(),
+            size_hint_y=None,
+            height=dp(40)
+        )
+        filter_buttons_box.add_widget(btn_condition2)
+        
+        btn_combined_1_2 = MDRaisedButton(
+            text="⭐ المطلوب: شرط (1) + شرط (2) ⭐",
+            on_release=lambda x: self.apply_combined_filter_1_and_2(),
+            size_hint_y=None,
+            height=dp(40),
+            md_bg_color=get_color_from_hex("#00A0B0")
+        )
+        filter_buttons_box.add_widget(btn_combined_1_2)
+        
+        btn_reset = MDFlatButton(
+            text="🔄 Reset All Filters",
+            on_release=lambda x: self.reset_all_filters(),
+            size_hint_y=None,
+            height=dp(40)
+        )
+        filter_buttons_box.add_widget(btn_reset)
         
         container.add_widget(filter_buttons_box)
         
@@ -4073,6 +5620,7 @@ class ProfessionalFootballApp(MDApp):
         """إعادة تعيين جميع الفلترات"""
         self.reset_filter()
         self.filter_ns_perfect_1_1_enabled = False
+        self.filter_ns_perfect_2_2_enabled = False
         
         self.save_filter_state()
         
@@ -4329,6 +5877,133 @@ class ProfessionalFootballApp(MDApp):
         except Exception as e:
             print(f"Error extracting goals from '{stats_str}': {e}")
             return None, None
+
+    def filter_condition_2(self, match_data):
+        """فلتر الشرط 2 مع استخدام الكاش المحسن"""
+        try:
+            home_team_id = match_data.get('home_team_id')
+            away_team_id = match_data.get('away_team_id')
+            league_id = match_data.get('league_id')
+            season = match_data.get('season')
+            
+            if not season:
+                season = datetime.now().year
+                
+            home_score = match_data.get('home_score', 0)
+            away_score = match_data.get('away_score', 0)
+            status = match_data.get('status', 'NS')
+            
+            time_str = match_data.get('time', '')
+            match_date = ""
+            if time_str:
+                try:
+                    dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                    match_date = dt.strftime('%Y-%m-%d')
+                except:
+                    match_date = datetime.now().strftime('%Y-%m-%d')
+            
+            scheduled_cache = self.storage.load_scheduled_matches_from_cache(match_date, league_id)
+            
+            if scheduled_cache:
+                match_found = any(
+                    m.get('home_team_id') == home_team_id and 
+                    m.get('away_team_id') == away_team_id 
+                    for m in scheduled_cache
+                )
+                if not match_found:
+                    return "❌ no (المباراة غير مجدولة)"
+            else:
+                return "❌ no (لا يوجد كاش)"
+            
+            if status in ['FT', 'AET', 'PEN']:
+                if home_score == 0 and away_score == 0:
+                    return "❌ no"
+                return "❌ no"
+            
+            if home_score > 0 and away_score > 0:
+                return "❌ no"
+            
+            if status not in ['NS', '1H', '2H', 'HT', 'ET', 'LIVE']:
+                return "❌ no"
+            
+            if status == 'NS':
+                return "✅ yes"
+            
+            if home_score == away_score and status != 'NS': 
+                return "✅ yes"
+            
+            if not home_team_id or not away_team_id or not league_id:
+                return "❌ no"
+            
+            if home_score < away_score:
+                losing_team_id = home_team_id
+                winning_team_id = away_team_id
+                losing_is_home = True
+            else: 
+                losing_team_id = away_team_id
+                winning_team_id = home_team_id
+                losing_is_home = False
+            
+            # ⭐ استخدام الكاش المحسن
+            losing_stats_dict = self.get_team_goals_from_cache(losing_team_id, league_id, season, losing_is_home, match_date)
+            winning_stats_dict = self.get_team_goals_from_cache(winning_team_id, league_id, season, not losing_is_home, match_date)
+            
+            losing_goals_for = losing_stats_dict.get('goals_for', 0) if losing_stats_dict else 0          
+            winning_goals_for = winning_stats_dict.get('goals_for', 0) if winning_stats_dict else 0            
+            
+            if losing_goals_for >= winning_goals_for:
+                return "✅ yes"
+            
+            return "❌ no"
+            
+        except Exception as e:
+            return "❌ no"
+
+    def combined_filter_condition(self, match_data):
+        condition1_result = self.filter_condition_1(match_data)
+        condition2_result = self.filter_condition_2(match_data)
+        
+        if condition1_result == "✅ yes" and condition2_result == "✅ yes":
+            return "✅ yes"
+        
+        return "❌ no"
+        
+    def filter_condition_combined_1_and_2(self, match_data):
+        condition1_result = self.filter_condition_1(match_data)
+        if condition1_result != "✅ yes":
+            return "❌ no"
+
+        condition2_result = self.filter_condition_2(match_data)
+        
+        if condition2_result == "✅ yes":
+            return "✅ yes"
+        
+        return "❌ no"
+
+    def apply_filter_condition_1(self):
+        self.set_filter_logic(self.filter_condition_1, "One Team Scored/No Goals")
+        self.run_filter_process_threaded()
+        self.show_snackbar("Applied Condition 1: One team scored or no goals")
+
+    def apply_filter_condition_2(self):
+        self.set_filter_logic(self.filter_condition_2, "Loser Scored More (Last 3)")
+        self.run_filter_process_threaded()
+        self.show_snackbar("Applied Condition 2: Losing team scored more in last 3 matches")
+
+    def apply_combined_filter(self):
+        self.set_filter_logic(self.combined_filter_condition, "Combined Filter (1 and 2)")
+        self.run_filter_process_threaded()
+        self.show_snackbar("Applied Combined Filter (Conditions 1 and 2)")
+
+    def apply_combined_filter_1_and_2(self):
+        self.set_filter_logic(self.filter_condition_combined_1_and_2, "Condition 1 + 2")
+        self.run_filter_process_threaded()
+        self.show_snackbar("Applied Combined Filter: One Team Scored/No Goals AND Loser Stats")
+    
+    def apply_combined_filter_on_start(self):
+        self.set_filter_logic(self.filter_condition_combined_1_and_2, "Condition 1 + 2 (Auto)")
+        Clock.schedule_once(lambda dt: self.run_filter_process_threaded(), 0)
+        self.show_snackbar("Auto-Filter Applied: Condition 1 + 2")
 
     def reset_filter_ui(self):
         self.reset_filter()
