@@ -5622,7 +5622,7 @@ class ProfessionalFootballApp(MDApp):
         filter_buttons_box.add_widget(btn_condition2)
         
         btn_combined_1_2 = MDRaisedButton(
-            text="⭐ Condition  (1) +  (2) ⭐"
+            text="⭐ Condition  (1) +  (2) ⭐",
             on_release=lambda x: self.apply_combined_filter_1_and_2(),
             size_hint_y=None,
             height=dp(40),
