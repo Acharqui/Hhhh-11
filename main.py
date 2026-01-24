@@ -2431,7 +2431,7 @@ class ProfessionalFootballApp(MDApp):
                         filtered_matches.append(match_data)
                         self._auto_save_to_favorites_if_not_exists(
                             match_data,
-                            "perfect_1_1",
+                            "N/A  //  _rank",
                             "Invalid season format"
                         )
                         continue
@@ -2448,7 +2448,7 @@ class ProfessionalFootballApp(MDApp):
                         filtered_matches.append(match_data)
                         self._auto_save_to_favorites_if_not_exists(
                             match_data,
-                            "perfect_1_1",
+                            "N/A // yt7sb auto (80)",
                             "New or missing in last season"
                         )
                         continue
@@ -2478,7 +2478,7 @@ class ProfessionalFootballApp(MDApp):
                         filtered_matches.append(match_data)
                         self._auto_save_to_favorites_if_not_exists(
                             match_data,
-                            "perfect_1_1",
+                            "suprimée   or cheeck 2",
                             "Incomplete match data"
                         )
                         continue
@@ -2490,7 +2490,7 @@ class ProfessionalFootballApp(MDApp):
                         filtered_matches.append(match_data)
                         self._auto_save_to_favorites_if_not_exists(
                             match_data,
-                            "perfect_1_1",
+                            "suprimée   or cheeck 2",
                             "Not enough matches"
                         )
                         continue
@@ -5563,7 +5563,7 @@ class ProfessionalFootballApp(MDApp):
             spacing=dp(10)
         )
         btn_ns_filter_label = MDLabel(
-            text="📅 NS Filter (Perfect 1_1) for Calendar",
+            text="📅 ) N/A _last rank__ or__no last 3 Goals",
             theme_text_color='Primary',
             halign='left',
             valign='center',
@@ -5588,7 +5588,7 @@ class ProfessionalFootballApp(MDApp):
             spacing=dp(10)
         )
         btn_ns_filter_2_2_label = MDLabel(
-            text="📅 NS Filter (Perfect 2_2) for Calendar",
+            text="📅  FiLTER (Perfect 2_2) ORiGINAL",
             theme_text_color='Primary',
             halign='left',
             valign='center',
@@ -5622,7 +5622,7 @@ class ProfessionalFootballApp(MDApp):
         filter_buttons_box.add_widget(btn_condition2)
         
         btn_combined_1_2 = MDRaisedButton(
-            text="⭐ المطلوب: شرط (1) + شرط (2) ⭐",
+            text="⭐ Condition  (1) +  (2) ⭐"
             on_release=lambda x: self.apply_combined_filter_1_and_2(),
             size_hint_y=None,
             height=dp(40),
