@@ -274,16 +274,15 @@ class SQLiteStorage:
                 )
             """)
 
-            # ⭐⭐ تحديث: جدول كاش أهداف الفرق (فقط للمباريات المجدولة)
+            # ⭐⭐ تحديث: جدول كاش أهداف الفرق (بدون match_date)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS scheduled_teams_goals_cache (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     league_id INTEGER,
                     season INTEGER,
-                    match_date TEXT,
-                    goals_data TEXT,  -- بيانات JSON لفرق المباريات المجدولة فقط
+                    goals_data TEXT,  -- بيانات JSON لفرق الدوري فقط
                     last_updated TEXT,
-                    UNIQUE(league_id, season, match_date)
+                    UNIQUE(league_id, season)
                 )
             """)
 
@@ -514,12 +513,12 @@ class SQLiteStorage:
             print(f"❌ خطأ في تحميل الكاش: {e}")
             return None
 
-    # ⭐⭐ دوال الكاش الجديد للأهداف (للمباريات المجدولة فقط)
-    def save_scheduled_teams_goals_cache(self, league_id, season, match_date, goals_data):
-        """حفظ بيانات الأهداف للفرق المجدولة فقط مع التحقق من التكرار"""
+    # ⭐⭐ دوال الكاش الجديد للأهداف (بدون match_date)
+    def save_scheduled_teams_goals_cache(self, league_id, season, goals_data):
+        """حفظ بيانات الأهداف للفرق بدون match_date"""
         try:
             # التحقق أولاً من وجود البيانات في الكاش
-            existing_data = self.load_scheduled_teams_goals_cache(league_id, season, match_date)
+            existing_data = self.load_scheduled_teams_goals_cache(league_id, season)
             
             if existing_data:
                 # مقارنة البيانات لتجنب الحفظ المكرر
@@ -527,7 +526,7 @@ class SQLiteStorage:
                 new_json = json.dumps(goals_data, sort_keys=True)
                 
                 if existing_json == new_json:
-                    print(f"ℹ️ بيانات أهداف الفرق للدوري {league_id} بتاريخ {match_date} موجودة بالفعل في الكاش")
+                    print(f"ℹ️ بيانات أهداف الفرق للدوري {league_id} للموسم {season} موجودة بالفعل في الكاش")
                     return True  # البيانات موجودة بالفعل، لا حاجة للحفظ
             
             # إذا لم تكن موجودة أو مختلفة، نقوم بالحفظ
@@ -539,47 +538,47 @@ class SQLiteStorage:
             
             cursor.execute('''
                 INSERT OR REPLACE INTO scheduled_teams_goals_cache 
-                (league_id, season, match_date, goals_data, last_updated)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (league_id, season, match_date, json_data, last_updated))
+                (league_id, season, goals_data, last_updated)
+                VALUES (?, ?, ?, ?)
+            ''', (league_id, season, json_data, last_updated))
             
             conn.commit()
             conn.close()
-            print(f"✅ تم حفظ كاش الأهداف لـ {len(goals_data)} فريق مجدول ({league_id} - {match_date})")
+            print(f"✅ تم حفظ كاش الأهداف لـ {len(goals_data)} فريق في الدوري {league_id} للموسم {season}")
             return True
         except Exception as e:
-            print(f"❌ خطأ في حفظ كاش الأهداف للفرق المجدولة: {e}")
+            print(f"❌ خطأ في حفظ كاش الأهداف للفرق: {e}")
             return False
 
-    def load_scheduled_teams_goals_cache(self, league_id, season, match_date):
-        """تحميل بيانات الأهداف للفرق المجدولة"""
+    def load_scheduled_teams_goals_cache(self, league_id, season):
+        """تحميل بيانات الأهداف للفرق بدون match_date"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
             cursor.execute('''
                 SELECT goals_data FROM scheduled_teams_goals_cache
-                WHERE league_id = ? AND season = ? AND match_date = ?
-            ''', (league_id, season, match_date))
+                WHERE league_id = ? AND season = ?
+            ''', (league_id, season))
             
             row = cursor.fetchone()
             conn.close()
             
             if row:
                 goals_data = json.loads(row[0])
-                print(f"✅ تم تحميل كاش الأهداف لـ {len(goals_data)} فريق مجدول")
+                print(f"✅ تم تحميل كاش الأهداف لـ {len(goals_data)} فريق")
                 return goals_data
             
             return None
         except Exception as e:
-            print(f"❌ خطأ في تحميل كاش الأهداف للفرق المجدولة: {e}")
+            print(f"❌ خطأ في تحميل كاش الأهداف للفرق: {e}")
             return None
 
-    def update_scheduled_teams_goals_cache(self, league_id, season, match_date, new_data):
-        """تحديث كاش الأهداف ببيانات جديدة مع التحقق من التكرار"""
+    def update_scheduled_teams_goals_cache(self, league_id, season, new_data):
+        """تحديث كاش الأهداف ببيانات جديدة بدون match_date"""
         try:
             # جلب البيانات الحالية
-            existing_data = self.load_scheduled_teams_goals_cache(league_id, season, match_date) or {}
+            existing_data = self.load_scheduled_teams_goals_cache(league_id, season) or {}
             
             # التحقق مما إذا كانت البيانات الجديدة موجودة بالفعل
             needs_update = False
@@ -603,7 +602,7 @@ class SQLiteStorage:
             existing_data.update(new_data)
             
             # حفظ البيانات المدمجة
-            success = self.save_scheduled_teams_goals_cache(league_id, season, match_date, existing_data)
+            success = self.save_scheduled_teams_goals_cache(league_id, season, existing_data)
             
             if success:
                 print(f"✅ تم تحديث كاش الأهداف بـ {len(new_data)} فريق جديد")
@@ -1893,7 +1892,7 @@ class ProfessionalFootballApp(MDApp):
     
     current_focused_match = ObjectProperty(None, allownone=True)
     
-    # ⭐⭐ تحديث: كاش الأهداف للمباريات المجدولة فقط
+    # ⭐⭐ تحديث: كاش الأهداف للفرق بدون match_date
     scheduled_teams_goals_cache = DictProperty({})
     scheduled_teams_loading = DictProperty({})
     
@@ -1978,58 +1977,49 @@ class ProfessionalFootballApp(MDApp):
             self.current_focused_match.is_focused = False
             self.current_focused_match = None
 
-    # ⭐⭐ الدالة المحسنة لجلب أهداف فرق المباريات المجدولة فقط
-    def fetch_scheduled_teams_goals(self, league_id, season, match_date):
-        """جلب أهداف فرق المباريات المجدولة فقط (home last 3 home, away last 3 away)"""
+    # ⭐⭐ الدالة المعدلة لمنع تكرار API calls
+    def fetch_scheduled_teams_goals(self, league_id, season):
+        """جلب أهداف فرق الدوري فقط - API call واحد لكل فريق"""
         try:
-            # 1. جلب المباريات المجدولة من الكاش
-            scheduled_matches = self.storage.load_scheduled_matches_from_cache(match_date, league_id)
+            # 1. جلب جميع فرق الدوري من كاش الترتيب
+            all_league_teams = self.storage.load_league_standings_from_cache(league_id, season)
             
-            if not scheduled_matches:
-                print(f"⚠️ لا توجد مباريات مجدولة للدوري {league_id} بتاريخ {match_date}")
+            if not all_league_teams:
+                print(f"⚠️ لا توجد فرق في الدوري {league_id} للموسم {season}")
                 return {}
             
-            # 2. استخراج الفرق المشاركة مع تحديد الدور
-            teams_to_fetch = []
+            # 2. استخراج جميع الفرق الفريدة في الدوري
+            teams_to_fetch = set()  # استخدام set لمنع التكرار
             
-            for match in scheduled_matches:
-                home_team_id = match.get('home_team_id')
-                away_team_id = match.get('away_team_id')
-                
-                if home_team_id:
-                    # فريق المنزل: نحتاج last 3 home
-                    teams_to_fetch.append({
-                        'team_id': home_team_id,
-                        'is_home_team': True,
-                        'role': 'home'
-                    })
-                
-                if away_team_id:
-                    # فريق الضيف: نحتاج last 3 away
-                    teams_to_fetch.append({
-                        'team_id': away_team_id,
-                        'is_home_team': False,
-                        'role': 'away'
-                    })
+            for team_data in all_league_teams:
+                team_id = team_data.get('team_id')
+                if team_id:
+                    teams_to_fetch.add(team_id)
             
-            print(f"📋 فرق المباريات المجدولة: {len(teams_to_fetch)} فريق ({len(scheduled_matches)} مباراة)")
+            print(f"📋 عدد فرق الدوري {league_id}: {len(teams_to_fetch)} فريق")
             
             # 3. التحقق من الكاش أولاً
             all_teams_data = {}
             teams_to_fetch_from_api = []
             
-            for team_info in teams_to_fetch:
-                team_id = team_info['team_id']
-                is_home_team = team_info['is_home_team']
-                cache_key = f"{team_id}_{'home' if is_home_team else 'away'}"
+            for team_id in teams_to_fetch:
+                cache_key_home = f"{team_id}_home"
+                cache_key_away = f"{team_id}_away"
                 
-                # التحقق من الكاش
-                cached_data = self.get_team_goals_from_cache(team_id, league_id, season, is_home_team, match_date)
+                # التحقق من الكاش (Home)
+                cached_home_data = self.get_team_goals_from_cache(team_id, league_id, season, True)
+                # التحقق من الكاش (Away)
+                cached_away_data = self.get_team_goals_from_cache(team_id, league_id, season, False)
                 
-                if cached_data:
-                    all_teams_data[cache_key] = cached_data
-                else:
-                    teams_to_fetch_from_api.append(team_info)
+                if cached_home_data:
+                    all_teams_data[cache_key_home] = cached_home_data
+                
+                if cached_away_data:
+                    all_teams_data[cache_key_away] = cached_away_data
+                
+                # إذا كانت أي من البيانات مفقودة، نضيف الفريق للجلب من API
+                if not cached_home_data or not cached_away_data:
+                    teams_to_fetch_from_api.append(team_id)
             
             # 4. جلب الفرق المتبقية من API
             if teams_to_fetch_from_api:
@@ -2043,32 +2033,30 @@ class ProfessionalFootballApp(MDApp):
                     all_teams_data.update(api_results)
                     
                     # حفظ في الكاش
-                    self._update_scheduled_teams_cache(league_id, season, match_date, api_results)
+                    self._update_scheduled_teams_cache(league_id, season, api_results)
             
-            print(f"✅ تم جلب إحصائيات {len(all_teams_data)} فريق")
+            print(f"✅ تم جلب إحصائيات {len(all_teams_data)} حالة للدوري {league_id}")
             return all_teams_data
             
         except Exception as e:
             print(f"❌ خطأ في fetch_scheduled_teams_goals: {e}")
             return {}
 
-    def _fetch_multiple_teams_last_3_matches(self, teams_list, league_id, season):
-        """جلب last 3 matches لعدة فرق دفعة واحدة"""
+    def _fetch_multiple_teams_last_3_matches(self, team_ids, league_id, season):
+        """جلب last 3 matches لعدة فرق دفعة واحدة - API call واحد لكل فريق"""
         try:
             results = {}
             
-            for team_info in teams_list:
-                team_id = team_info['team_id']
-                is_home_team = team_info['is_home_team']
+            for team_id in team_ids:
+                # API call واحد فقط لكل فريق
+                team_data = self._fetch_team_last_3_matches_single_call(team_id, league_id, season)
                 
-                # جلب last 3 matches حسب الدور
-                stats = self._fetch_team_last_3_matches(team_id, league_id, season, is_home_team)
-                
-                if stats:
-                    stats_dict = self._parse_stats_to_dict(stats)
-                    if stats_dict:
-                        cache_key = f"{team_id}_{'home' if is_home_team else 'away'}"
-                        results[cache_key] = stats_dict
+                if team_data:
+                    home_key = f"{team_id}_home"
+                    away_key = f"{team_id}_away"
+                    
+                    results[home_key] = team_data.get('home_stats', {})
+                    results[away_key] = team_data.get('away_stats', {})
             
             return results
             
@@ -2076,16 +2064,19 @@ class ProfessionalFootballApp(MDApp):
             print(f"❌ خطأ في _fetch_multiple_teams_last_3_matches: {e}")
             return {}
 
-    def _fetch_team_last_3_matches(self, team_id, league_id, season, is_home_team):
-        """جلب آخر 3 مباريات للفريق حسب الدور"""
+    # ⭐⭐ دالة جديدة لجلب البيانات مرة واحدة واستخراج home و away
+    def _fetch_team_last_3_matches_single_call(self, team_id, league_id, season):
+        """جلب آخر 15 مباراة للفريق واستخراج home و away معاً"""
         try:
             url = f"{self.base_url}/fixtures"
             params = {
                 'team': team_id,
                 'league': league_id,
                 'season': season,
-                'last': 15  
+                'last': 15  # نطلب 15 مباراة لضمان وجود 3 home و 3 away
             }
+            
+            print(f"🌐 جلب API واحد للفريق {team_id}: v3/fixtures?team={team_id}&league={league_id}&season={season}&last=15")
             
             response = self.fetch_with_retry(url, params, max_retries=2)
             
@@ -2096,6 +2087,7 @@ class ProfessionalFootballApp(MDApp):
                 if not matches:
                     return None
                 
+                # تصفية المباريات المنتهية فقط
                 finished_matches = []
                 for match in matches:
                     fixture = match.get('fixture', {})
@@ -2107,40 +2099,121 @@ class ProfessionalFootballApp(MDApp):
                         teams = match.get('teams', {})
                         goals = match.get('goals', {})
                         
-                        is_current_team_home = teams.get('home', {}).get('id') == team_id
-                        
-                        # نأخذ فقط المباريات بالدور المطلوب
-                        if (is_home_team and is_current_team_home) or (not is_home_team and not is_current_team_home):
-                            match_data = {
-                                'home_goals': goals.get('home', 0),
-                                'away_goals': goals.get('away', 0),
-                                'is_home': is_current_team_home,
-                                'date': fixture.get('date', '')
-                            }
-                            finished_matches.append(match_data)
+                        match_data = {
+                            'home_goals': goals.get('home', 0),
+                            'away_goals': goals.get('away', 0),
+                            'home_team_id': teams.get('home', {}).get('id'),
+                            'away_team_id': teams.get('away', {}).get('id'),
+                            'date': fixture.get('date', '')
+                        }
+                        finished_matches.append(match_data)
                 
                 finished_matches.sort(key=lambda x: x['date'], reverse=True)
                 
-                last_3_matches = finished_matches[:3]
+                # استخراج home matches (الفريق كان فريق مستضيف)
+                home_matches = []
+                for match in finished_matches:
+                    if match['home_team_id'] == team_id:
+                        home_matches.append(match)
+                    if len(home_matches) >= 3:
+                        break
                 
-                if len(last_3_matches) == 0:
-                    return None
+                # استخراج away matches (الفريق كان فريق ضيف)
+                away_matches = []
+                for match in finished_matches:
+                    if match['away_team_id'] == team_id:
+                        away_matches.append(match)
+                    if len(away_matches) >= 3:
+                        break
                 
-                return self.calcul(last_3_matches, is_home=is_home_team)
+                # حساب الإحصائيات
+                home_stats = self._calculate_stats_from_matches(home_matches, team_id, is_home=True)
+                away_stats = self._calculate_stats_from_matches(away_matches, team_id, is_home=False)
+                
+                return {
+                    'home_stats': home_stats,
+                    'away_stats': away_stats,
+                    'home_matches_count': len(home_matches),
+                    'away_matches_count': len(away_matches)
+                }
                     
             return None
             
         except Exception as e:
-            print(f"❌ خطأ في _fetch_team_last_3_matches: {e}")
+            print(f"❌ خطأ في _fetch_team_last_3_matches_single_call: {e}")
             return None
 
-    def get_team_goals_from_cache(self, team_id, league_id, season, is_home_team, match_date=None):
-        """جلب بيانات الأهداف للفريق من الكاش"""
+    # ⭐⭐ دالة جديدة لحساب الإحصائيات من قائمة المباريات
+    def _calculate_stats_from_matches(self, matches, team_id, is_home):
+        """حساب الإحصائيات من قائمة المباريات"""
         try:
-            if not match_date:
-                match_date = datetime.now().strftime('%Y-%m-%d')
+            if not matches:
+                return {'color_type': 'gray', 'goals_for': 0, 'goals_against': 0, 'matches_count': 0}
             
-            cache_key = f"{league_id}_{season}_{match_date}"
+            total_goals_for = 0
+            total_goals_against = 0
+            zero_goal_matches = 0
+            
+            for match in matches:
+                if is_home:
+                    goals_for = match.get('home_goals', 0)
+                    goals_against = match.get('away_goals', 0)
+                else:
+                    goals_for = match.get('away_goals', 0)
+                    goals_against = match.get('home_goals', 0)
+                
+                total_goals_for += goals_for
+                total_goals_against += goals_against
+                
+                if goals_for == 0:
+                    zero_goal_matches += 1
+            
+            final_goals_for = min(total_goals_for, 9)
+            final_goals_against = min(total_goals_against, 9)
+
+            if final_goals_for >= 6:
+                if zero_goal_matches == 0:
+                    color_type = "green"
+                elif zero_goal_matches == 1:
+                    color_type = "blue"
+                elif zero_goal_matches >= 2:
+                    color_type = "red"
+            else:
+                color_type = "green"
+            
+            return {
+                'color_type': color_type,
+                'goals_for': final_goals_for,
+                'goals_against': final_goals_against,
+                'matches_count': len(matches)
+            }
+            
+        except Exception as e:
+            print(f"❌ خطأ في _calculate_stats_from_matches: {e}")
+            return {'color_type': 'gray', 'goals_for': 0, 'goals_against': 0, 'matches_count': 0}
+
+    # ⭐⭐ دالة متوافقة مع الكود الحالي
+    def _fetch_team_last_3_matches(self, team_id, league_id, season, is_home_team):
+        """نسخة متوافقة مع الكود الحالي (تستخدم الدالة الجديدة)"""
+        team_data = self._fetch_team_last_3_matches_single_call(team_id, league_id, season)
+        
+        if not team_data:
+            return None
+        
+        if is_home_team:
+            stats = team_data.get('home_stats')
+        else:
+            stats = team_data.get('away_stats')
+        
+        if stats:
+            return f"{stats['color_type']}:{stats['goals_for']}:{stats['goals_against']}"
+        
+        return None
+
+    def get_team_goals_from_cache(self, team_id, league_id, season, is_home_team):
+        """جلب بيانات الأهداف للفريق من الكاش (بدون match_date)"""
+        try:
+            cache_key = f"{league_id}_{season}"
             
             if cache_key in self.scheduled_teams_goals_cache:
                 league_data = self.scheduled_teams_goals_cache[cache_key]
@@ -2150,8 +2223,8 @@ class ProfessionalFootballApp(MDApp):
                     print(f"✅ استخدام الكاش المحمل للفريق {team_id} ({'home' if is_home_team else 'away'})")
                     return league_data[team_key]
             
-            # محاولة تحميل من قاعدة البيانات
-            cached_data = self.storage.load_scheduled_teams_goals_cache(league_id, season, match_date)
+            # محاولة تحميل من قاعدة البيانات (بدون match_date)
+            cached_data = self.storage.load_scheduled_teams_goals_cache(league_id, season)
             
             if cached_data:
                 self.scheduled_teams_goals_cache[cache_key] = cached_data
@@ -2167,21 +2240,21 @@ class ProfessionalFootballApp(MDApp):
             print(f"❌ Error in get_team_goals_from_cache: {e}")
             return None
 
-    def _update_scheduled_teams_cache(self, league_id, season, match_date, new_data):
-        """تحديث كاش الفرق المجدولة ببيانات جديدة"""
+    def _update_scheduled_teams_cache(self, league_id, season, new_data):
+        """تحديث كاش الفرق ببيانات جديدة (بدون match_date)"""
         try:
-            cache_key = f"{league_id}_{season}_{match_date}"
+            cache_key = f"{league_id}_{season}"
             
             if cache_key in self.scheduled_teams_goals_cache:
                 self.scheduled_teams_goals_cache[cache_key].update(new_data)
             else:
                 self.scheduled_teams_goals_cache[cache_key] = new_data
             
-            # حفظ في قاعدة البيانات
-            success = self.storage.update_scheduled_teams_goals_cache(league_id, season, match_date, new_data)
+            # حفظ في قاعدة البيانات (بدون match_date)
+            success = self.storage.update_scheduled_teams_goals_cache(league_id, season, new_data)
             
             if success:
-                print(f"✅ تم تحديث كاش الفرق المجدولة بـ {len(new_data)} فريق جديد")
+                print(f"✅ تم تحديث كاش الفرق بـ {len(new_data)} فريق جديد")
             
             return success
             
@@ -2458,20 +2531,11 @@ class ProfessionalFootballApp(MDApp):
                     if status not in ['NS', 'TBD']:
                         continue
                     
-                    time_str = match_data.get('time', '')
-                    match_date = ""
-                    if time_str:
-                        try:
-                            dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-                            match_date = dt.strftime('%Y-%m-%d')
-                        except:
-                            match_date = datetime.now().strftime('%Y-%m-%d')
-                    
                     home_result = self._get_team_goals_for_filter_with_cache(
-                        home_team_id, league_id, season, True, match_date
+                        home_team_id, league_id, season, True
                     )
                     away_result = self._get_team_goals_for_filter_with_cache(
-                        away_team_id, league_id, season, False, match_date
+                        away_team_id, league_id, season, False
                     )
                     
                     if home_result[0] is None or away_result[0] is None:
@@ -3641,6 +3705,7 @@ class ProfessionalFootballApp(MDApp):
                     'last_season': {(2, 80), (3, 80), (4, 80)},
                     'goals_condition': {(3, 5), (3, 6), (3, 7), (3, 8), (3, 9)},
                     'goals_latest': {(5, 1), (5, 2), (5, 3), (5, 4), (6, 1), (6, 2), (6, 3), (6, 4), (7, 1), (7, 2), (7, 3), (7, 4), (8, 1), (8, 2), (8, 3), (8, 4), (9, 1), (9, 2), (9, 3), (9, 4)}
+
                 }
             ]
             
@@ -3739,13 +3804,10 @@ class ProfessionalFootballApp(MDApp):
             print(f"❌ ERROR in filter_ns_perfect_2_2_batch: {e}")
             return []
 
-    def _get_team_goals_with_against(self, team_id, league_id, season, is_home_team, match_date=None):
-        """جلب أهداف for و against معاً"""
+    def _get_team_goals_with_against(self, team_id, league_id, season, is_home_team):
+        """جلب أهداف for و against معاً (بدون تاريخ)"""
         try:
-            if not match_date:
-                match_date = datetime.now().strftime('%Y-%m-%d')
-            
-            cached_data = self.get_team_goals_from_cache(team_id, league_id, season, is_home_team, match_date)
+            cached_data = self.get_team_goals_from_cache(team_id, league_id, season, is_home_team)
             
             if cached_data:
                 goals_for = cached_data.get('goals_for', 0)
@@ -3818,13 +3880,10 @@ class ProfessionalFootballApp(MDApp):
             print(f"❌ خطأ في الحفظ التلقائي للمباراة: {e}")
             return False
 
-    def _get_team_goals_for_filter_with_cache(self, team_id, league_id, season, is_home_team, match_date=None):
-        """جلب الأهداف للفلتر مع استخدام الكاش المحسن"""
+    def _get_team_goals_for_filter_with_cache(self, team_id, league_id, season, is_home_team):
+        """جلب الأهداف للفلتر مع استخدام الكاش المحسن (بدون تاريخ)"""
         try:
-            if not match_date:
-                match_date = datetime.now().strftime('%Y-%m-%d')
-            
-            cached_data = self.get_team_goals_from_cache(team_id, league_id, season, is_home_team, match_date)
+            cached_data = self.get_team_goals_from_cache(team_id, league_id, season, is_home_team)
             
             if cached_data:
                 print(f"✅ استخدام الكاش للفلتر: {team_id}")
@@ -4527,7 +4586,7 @@ class ProfessionalFootballApp(MDApp):
             self.show_snackbar("⚠️ خطأ في فتح الإحصائيات")
 
     def load_popup_statistics_with_scheduled_cache(self, match_data, popup):
-        """جلب الإحصائيات مع استخدام كاش الفرق المجدولة فقط"""
+        """جلب الإحصائيات مع استخدام كاش الفرق بدون تاريخ"""
         try:
             home_team_id = match_data.get('home_team_id')
             away_team_id = match_data.get('away_team_id')
@@ -4537,47 +4596,34 @@ class ProfessionalFootballApp(MDApp):
             if not season:
                 season = datetime.now().year
             
-            # استخراج تاريخ المباراة
-            time_str = match_data.get('time', '')
-            match_date = ""
-            if time_str:
-                try:
-                    dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-                    match_date = dt.strftime('%Y-%m-%d')
-                except:
-                    match_date = datetime.now().strftime('%Y-%m-%d')
-            
-            if not match_date:
-                match_date = datetime.now().strftime('%Y-%m-%d')
-            
             if home_team_id and away_team_id and league_id:
                 future = self.executor.submit(
                     self._fetch_popup_stats_with_scheduled_cache, 
-                    match_data, popup, home_team_id, away_team_id, league_id, season, match_date
+                    match_data, popup, home_team_id, away_team_id, league_id, season
                 )
                 self.futures.append(future)
                 
         except Exception as e:
             print(f"❌ خطأ في تحميل الإحصائيات: {e}")
 
-    def _fetch_popup_stats_with_scheduled_cache(self, match_data, popup, home_team_id, away_team_id, league_id, season, match_date):
-        """دالة مساعدة - تجلب فقط فرق المباريات المجدولة"""
+    def _fetch_popup_stats_with_scheduled_cache(self, match_data, popup, home_team_id, away_team_id, league_id, season):
+        """دالة مساعدة - تجلب فرق الدوري فقط"""
         try:
-            cache_key = f"{league_id}_{season}_{match_date}"
+            cache_key = f"{league_id}_{season}"
             
             if cache_key not in self.scheduled_teams_goals_cache:
-                print(f"🔄 جلب إحصائيات فرق المباريات المجدولة للدوري {league_id}")
+                print(f"🔄 جلب إحصائيات فرق الدوري {league_id}")
                 
                 if cache_key in self.scheduled_teams_loading and self.scheduled_teams_loading[cache_key]:
                     print(f"⚠️ كاش الدوري {league_id} قيد التحميل بالفعل")
                 else:
                     self.scheduled_teams_loading[cache_key] = True
                     
-                    scheduled_teams_data = self.fetch_scheduled_teams_goals(league_id, season, match_date)
+                    scheduled_teams_data = self.fetch_scheduled_teams_goals(league_id, season)
                     
                     if scheduled_teams_data:
                         self.scheduled_teams_goals_cache[cache_key] = scheduled_teams_data
-                        print(f"✅ تم تحميل {len(scheduled_teams_data)} حالة لفرق المباريات المجدولة")
+                        print(f"✅ تم تحميل {len(scheduled_teams_data)} حالة لفرق الدوري")
                     
                     self.scheduled_teams_loading[cache_key] = False
             
@@ -4723,18 +4769,9 @@ class ProfessionalFootballApp(MDApp):
                 season = datetime.now().year
                 
             if home_team_id and away_team_id and league_id:
-                # استخراج تاريخ المباراة للكاش
-                time_str = match_data.get('time', '')
-                match_date = ""
-                if time_str:
-                    try:
-                        dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-                        match_date = dt.strftime('%Y-%m-%d')
-                    except:
-                        match_date = datetime.now().strftime('%Y-%m-%d')
-                
-                home_stats_dict = self.get_team_goals_from_cache(home_team_id, league_id, season, True, match_date)
-                away_stats_dict = self.get_team_goals_from_cache(away_team_id, league_id, season, False, match_date)
+                # استخدام الكاش بدون تاريخ
+                home_stats_dict = self.get_team_goals_from_cache(home_team_id, league_id, season, True)
+                away_stats_dict = self.get_team_goals_from_cache(away_team_id, league_id, season, False)
                 
                 home_goals_for = home_stats_dict.get('goals_for', 0) if home_stats_dict else 0
                 away_goals_for = away_stats_dict.get('goals_for', 0) if away_stats_dict else 0
@@ -5689,7 +5726,7 @@ class ProfessionalFootballApp(MDApp):
             tables_to_clear = [
                 'scheduled_matches_cache', 
                 'league_standings_cache',
-                'scheduled_teams_goals_cache'
+                'scheduled_teams_goals_cache'  # التحديث: بدون match_date
             ]
             
             success, cleared_tables = self.storage.clear_specific_cache(tables=tables_to_clear)
@@ -5987,7 +6024,7 @@ class ProfessionalFootballApp(MDApp):
             return None, None
 
     def filter_condition_2(self, match_data):
-        """فلتر الشرط 2 مع استخدام الكاش المحسن"""
+        """فلتر الشرط 2 مع استخدام الكاش المحسن (بدون تاريخ)"""
         try:
             home_team_id = match_data.get('home_team_id')
             away_team_id = match_data.get('away_team_id')
@@ -6000,28 +6037,6 @@ class ProfessionalFootballApp(MDApp):
             home_score = match_data.get('home_score', 0)
             away_score = match_data.get('away_score', 0)
             status = match_data.get('status', 'NS')
-            
-            time_str = match_data.get('time', '')
-            match_date = ""
-            if time_str:
-                try:
-                    dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-                    match_date = dt.strftime('%Y-%m-%d')
-                except:
-                    match_date = datetime.now().strftime('%Y-%m-%d')
-            
-            scheduled_cache = self.storage.load_scheduled_matches_from_cache(match_date, league_id)
-            
-            if scheduled_cache:
-                match_found = any(
-                    m.get('home_team_id') == home_team_id and 
-                    m.get('away_team_id') == away_team_id 
-                    for m in scheduled_cache
-                )
-                if not match_found:
-                    return "❌ no (المباراة غير مجدولة)"
-            else:
-                return "❌ no (لا يوجد كاش)"
             
             if status in ['FT', 'AET', 'PEN']:
                 if home_score == 0 and away_score == 0:
@@ -6052,9 +6067,9 @@ class ProfessionalFootballApp(MDApp):
                 winning_team_id = home_team_id
                 losing_is_home = False
             
-            # ⭐ استخدام الكاش المحسن
-            losing_stats_dict = self.get_team_goals_from_cache(losing_team_id, league_id, season, losing_is_home, match_date)
-            winning_stats_dict = self.get_team_goals_from_cache(winning_team_id, league_id, season, not losing_is_home, match_date)
+            # ⭐ استخدام الكاش المحسن (بدون match_date)
+            losing_stats_dict = self.get_team_goals_from_cache(losing_team_id, league_id, season, losing_is_home)
+            winning_stats_dict = self.get_team_goals_from_cache(winning_team_id, league_id, season, not losing_is_home)
             
             losing_goals_for = losing_stats_dict.get('goals_for', 0) if losing_stats_dict else 0          
             winning_goals_for = winning_stats_dict.get('goals_for', 0) if winning_stats_dict else 0            
