@@ -1164,6 +1164,15 @@ class OptimizedCompactMatchItem(MDCard):
             print(f"Display update error: {e}")
 
     def get_status_text(self, status):
+        if status == 'NS':
+            round_val = self.match_data.get('round')
+            if round_val:
+                if "-" in round_val:
+                    return round_val.split("-")[-1].strip()
+                else:
+                    return round_val
+            return 'NS'
+
         status_map = {
             'NS': 'NS', '1H': '1H', 'HT': 'HT',
             '2H': '2H', 'ET': 'ET', 'P': 'P',
@@ -1171,6 +1180,7 @@ class OptimizedCompactMatchItem(MDCard):
             'BT': 'BT', 'SUSP': 'SUSP', 'INT': 'INT',
             'PST': 'PST', 'CANC': 'CANC', 'LIVE': 'LIVE'
         }
+        return status_map.get(status, status)
         return status_map.get(status, status)
 
     def get_time_text(self, status):
@@ -4239,7 +4249,9 @@ class ProfessionalFootballApp(MDApp):
                 teams = match.get('teams', {})
                 goals = match.get('goals', {})
                 league = match.get('league', {})
-                
+                league_data = match.get('league', {})
+                league_round = league_data.get('round', '')  # ⭐⭐ هذا هو حقل الجولة
+             
                 home_team = teams.get('home', {})
                 away_team = teams.get('away', {})
                 
@@ -4260,18 +4272,20 @@ class ProfessionalFootballApp(MDApp):
                     'league': league.get('name', 'Unknown League'),
                     'league_id': league.get('id'),
                     'season': league.get('season'),
+                    'round': league_round,  # ⭐⭐ إضافة حقل الجولة هنا!
                     
                     'home_team': home_team_name,
-                    'full_home_team': full_home_team_name,
+
                     'home_team_id': home_team.get('id'),
                     'away_team': away_team_name,
-                    'full_away_team': full_away_team_name,
+
                     'away_team_id': away_team.get('id'),
                     'home_score': home_score,
                     'away_score': away_score,
                     'status': status,
                     'elapsed': elapsed,
                     'time': fixture.get('date', ''),
+
                 }
                 
                 processed_matches.append(processed_match)
