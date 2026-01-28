@@ -2220,29 +2220,41 @@ class ProfessionalFootballApp(MDApp):
         
         return None
 
-    def get_team_goals_from_cache(self, team_id, league_id, season, is_home_team):
-        """جلب بيانات الأهداف للفريق من الكاش (بدون match_date)"""
+    def get_team_goals_from_cache(self, team_id, league_id, season, is_home_team, match_date=None):
+        """جلب بيانات الأهداف للفريق من الكاش - محسنة ومتوافقة مع جميع الاستخدامات"""
         try:
             cache_key = f"{league_id}_{season}"
+            team_key = f"{team_id}_{'home' if is_home_team else 'away'}"
             
+            # 1. التحقق من الذاكرة المؤقتة
             if cache_key in self.scheduled_teams_goals_cache:
                 league_data = self.scheduled_teams_goals_cache[cache_key]
-                team_key = f"{team_id}_{'home' if is_home_team else 'away'}"
-                
                 if team_key in league_data:
-                    print(f"✅ استخدام الكاش المحمل للفريق {team_id} ({'home' if is_home_team else 'away'})")
                     return league_data[team_key]
             
-            # محاولة تحميل من قاعدة البيانات (بدون match_date)
+            # 2. محاولة تحميل من قاعدة البيانات
             cached_data = self.storage.load_scheduled_teams_goals_cache(league_id, season)
-            
             if cached_data:
                 self.scheduled_teams_goals_cache[cache_key] = cached_data
-                
-                team_key = f"{team_id}_{'home' if is_home_team else 'away'}"
                 if team_key in cached_data:
-                    print(f"✅ استخدام الكاش من قاعدة البيانات للفريق {team_id}")
                     return cached_data[team_key]
+            
+            # 3. إذا لم يكن في الكاش، جلب بيانات الفريق كاملة مرة واحدة
+            print(f"🌐 جلب بيانات الفريق {team_id} كاملة من API")
+            team_full_stats = self._fetch_team_both_home_away_stats(team_id, league_id, season)
+            
+            if team_full_stats:
+                # تحديث الكاش
+                if cache_key in self.scheduled_teams_goals_cache:
+                    self.scheduled_teams_goals_cache[cache_key].update(team_full_stats)
+                else:
+                    self.scheduled_teams_goals_cache[cache_key] = team_full_stats
+                
+                # حفظ في قاعدة البيانات
+                self.storage.update_scheduled_teams_goals_cache(league_id, season, team_full_stats)
+                
+                # إرجاع البيانات المطلوبة
+                return team_full_stats.get(team_key)
             
             return None
             
@@ -3815,7 +3827,7 @@ class ProfessionalFootballApp(MDApp):
             return []
 
     def _get_team_goals_with_against(self, team_id, league_id, season, is_home_team):
-        """جلب أهداف for و against معاً (بدون تاريخ)"""
+        """جلب أهداف for و against معاً - تحديث للتتوافق مع الكاش الجديد"""
         try:
             cached_data = self.get_team_goals_from_cache(team_id, league_id, season, is_home_team)
             
