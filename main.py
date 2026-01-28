@@ -6050,7 +6050,7 @@ class ProfessionalFootballApp(MDApp):
             return None, None
 
     def filter_condition_2(self, match_data):
-        """فلتر الشرط 2 مع استخدام الكاش المحسن (بدون تاريخ)"""
+        """فلتر الشرط 2 مع استخدام الكاش المحسن"""
         try:
             home_team_id = match_data.get('home_team_id')
             away_team_id = match_data.get('away_team_id')
@@ -6063,6 +6063,28 @@ class ProfessionalFootballApp(MDApp):
             home_score = match_data.get('home_score', 0)
             away_score = match_data.get('away_score', 0)
             status = match_data.get('status', 'NS')
+            
+            time_str = match_data.get('time', '')
+            match_date = ""
+            if time_str:
+                try:
+                    dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                    match_date = dt.strftime('%Y-%m-%d')
+                except:
+                    match_date = datetime.now().strftime('%Y-%m-%d')
+            
+            scheduled_cache = self.storage.load_scheduled_matches_from_cache(match_date, league_id)
+            
+            if scheduled_cache:
+                match_found = any(
+                    m.get('home_team_id') == home_team_id and 
+                    m.get('away_team_id') == away_team_id 
+                    for m in scheduled_cache
+                )
+                if not match_found:
+                    return "❌ no (المباراة غير مجدولة)"
+            else:
+                return "❌ no (لا يوجد كاش)"
             
             if status in ['FT', 'AET', 'PEN']:
                 if home_score == 0 and away_score == 0:
@@ -6093,12 +6115,12 @@ class ProfessionalFootballApp(MDApp):
                 winning_team_id = home_team_id
                 losing_is_home = False
             
-            # ⭐ استخدام الكاش المحسن (بدون match_date)
+            # ⭐ استخدام الكاش المحسن
             losing_stats_dict = self.get_team_goals_from_cache(losing_team_id, league_id, season, losing_is_home)
             winning_stats_dict = self.get_team_goals_from_cache(winning_team_id, league_id, season, not losing_is_home)
             
             losing_goals_for = losing_stats_dict.get('goals_for', 0) if losing_stats_dict else 0          
-            winning_goals_for = winning_stats_dict.get('goals_for', 0) if winning_stats_dict else 0            
+            winning_goals_for = winning_stats_dict.get('goals_for', 0) if winning_stats_dict else 0      
             
             if losing_goals_for >= winning_goals_for:
                 return "✅ yes"
