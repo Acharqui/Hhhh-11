@@ -4279,25 +4279,27 @@ class ProfessionalFootballApp(MDApp):
                 status = fixture.get('status', {}).get('short', 'NS')
                 elapsed = fixture.get('status', {}).get('elapsed')
                 
+                # ⭐ تنظيف اسم الدوري: أخذ كل شيء قبل "-"
+                league_name = league.get('name', 'Unknown League')
+                if '-' in league_name:
+                    league_name = league_name.split('-', 1)[0].strip()
+                
                 processed_match = {
                     'id': fixture.get('id'),
-                    'league': league.get('name', 'Unknown League'),
+                    'league': league_name,  # ✅ الاسم بعد التنظيف
                     'league_id': league.get('id'),
                     'season': league.get('season'),
                     'round': league_round,  # ⭐⭐ إضافة حقل الجولة هنا!
                     
                     'home_team': home_team_name,
-
                     'home_team_id': home_team.get('id'),
                     'away_team': away_team_name,
-
                     'away_team_id': away_team.get('id'),
                     'home_score': home_score,
                     'away_score': away_score,
                     'status': status,
                     'elapsed': elapsed,
                     'time': fixture.get('date', ''),
-
                 }
                 
                 processed_matches.append(processed_match)
