@@ -9,7 +9,6 @@ on:
       - main
 
 env:
-  # فرض تشغيل الـ Actions على Node 24 المتوافق حالياً لمنع التحذيرات تماماً
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -19,7 +18,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # تثبيت الاعتماديات مع تقليل السجلات لتسريع الخطوة
       - name: Install dependencies
         run: |
           sudo apt-get update -qq  
@@ -63,32 +61,29 @@ jobs:
             libssl-dev \
             automake
 
-      # إعداد Java 17 المطلوب لـ Gradle الحديث
       - name: Setup Java 17 required by Gradle
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # إعداد إصدار مستقر من Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # تثبيت الاعتماديات مع إجبار استخدام إصدار Cython المستقر المتوافق مع Kivy
       - name: Install pip dependencies
         run: |
           python -m pip install --upgrade pip
           pip install "cython<3.0.0" buildozer virtualenv
 
-      # بناء التطبيق مع السجلات الكاملة
+      # هنا التعديل الجوهري (تنظيف قبل البناء لضمان التخلص من الكاش المعطوب)
       - name: Build with Buildozer
         id: buildozer
         run: |
+          buildozer android clean
           yes | buildozer android debug
 
-      # رفع الحزم الناتجة في حال نجاح البناء
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
