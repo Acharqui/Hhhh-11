@@ -8,17 +8,21 @@ on:
     branches:
       - main
 
+# إضافة المتغير البيئي لإيقاف تحذيرات Node مؤقتاً
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+
 jobs:
   build:
-    runs-on: ubuntu-22.04  # استخدم Ubuntu 22.04 للتأكد من الاستقرار مع Buildozer
+    runs-on: ubuntu-22.04  # استخدام Ubuntu 22.04 للتأكد من الاستقرار مع Buildozer
 
     steps:
       - uses: actions/checkout@v4
 
-      # تثبيت الاعتماديات مع تقليل السجلات
+      # تثبيت الاعتماديات مع تقليل السجلات لتسريع الخطوة
       - name: Install dependencies
         run: |
-          sudo apt-get update -qq  # تحديث قائمة الحزم مع تقليل السجلات
+          sudo apt-get update -qq  
           sudo apt-get install -y -qq \
             build-essential \
             git \
@@ -38,7 +42,6 @@ jobs:
             sqlite3 \
             bzip2 \
             libbz2-dev \
-            zlib1g-dev \
             openssl \
             libgdbm-dev \
             libgdbm-compat-dev \
@@ -62,32 +65,32 @@ jobs:
             libssl-dev \
             automake
 
-      # إعداد Java 17 المطلوب لـ Gradle
+      # إعداد Java 17 المطلوب لـ Gradle الحديث
       - name: Setup Java 17 required by Gradle
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'  # أو يمكنك استخدام 'zulu', 'liberica', إلخ
+          distribution: 'temurin'
           java-version: '17'
 
-      # إعداد Python
+      # إعداد إصدار أحدث ومستقر من Python (3.11) لتوافقية أفضل مع أدوات الأندرويد
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.8'  # يمكنك تعديل إصدار Python حسب حاجتك
+          python-version: '3.11'
 
-      # تثبيت الاعتماديات الخاصة بـ pip
+      # تثبيت وترقية Buildozer و Cython لأحدث الإصدارات المتوافقة
       - name: Install pip dependencies
         run: |
-          pip install --upgrade pip
-          pip install buildozer cython==0.29.33
+          python -m pip install --upgrade pip
+          pip install --upgrade buildozer cython virtualenv
 
-      # بناء باستخدام Buildozer مع تقليل التفاصيل
+      # بناء التطبيق مع تفعيل السجلات بالكامل لرؤية الخطأ الحقيقي إذا حدث
       - name: Build with Buildozer
         id: buildozer
         run: |
-          yes | buildozer android debug --no-clean --quiet  # استخدم --quiet لتقليل السجلات
+          yes | buildozer android debug
 
-      # رفع الحزم الناتجة
+      # رفع الحزم الناتجة في حال نجاح البناء
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
