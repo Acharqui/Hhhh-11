@@ -8,13 +8,13 @@ on:
     branches:
       - main
 
-# إضافة المتغير البيئي لإيقاف تحذيرات Node مؤقتاً
 env:
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+  # فرض تشغيل الـ Actions على Node 24 المتوافق حالياً لمنع التحذيرات تماماً
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
-    runs-on: ubuntu-22.04  # استخدام Ubuntu 22.04 للتأكد من الاستقرار مع Buildozer
+    runs-on: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v4
@@ -36,8 +36,7 @@ jobs:
             libavformat-dev \
             libavcodec-dev \
             libunwind-dev \
-            zlib1g-dev
-          sudo apt-get install -y -qq \
+            zlib1g-dev \
             libsqlite3-dev \
             sqlite3 \
             bzip2 \
@@ -50,8 +49,7 @@ jobs:
             uuid-dev \
             libgstreamer1.0 \
             gstreamer1.0-plugins-base \
-            gstreamer1.0-plugins-good
-          sudo apt-get install -y -qq \
+            gstreamer1.0-plugins-good \
             zip \
             unzip \
             autoconf \
@@ -72,19 +70,19 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # إعداد إصدار أحدث ومستقر من Python (3.11) لتوافقية أفضل مع أدوات الأندرويد
+      # إعداد إصدار مستقر من Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # تثبيت وترقية Buildozer و Cython لأحدث الإصدارات المتوافقة
+      # تثبيت الاعتماديات مع إجبار استخدام إصدار Cython المستقر المتوافق مع Kivy
       - name: Install pip dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --upgrade buildozer cython virtualenv
+          pip install "cython<3.0.0" buildozer virtualenv
 
-      # بناء التطبيق مع تفعيل السجلات بالكامل لرؤية الخطأ الحقيقي إذا حدث
+      # بناء التطبيق مع السجلات الكاملة
       - name: Build with Buildozer
         id: buildozer
         run: |
