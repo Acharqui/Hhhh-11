@@ -10,6 +10,10 @@ jobs:
   build:
     runs-on: ubuntu-22.04
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -18,31 +22,25 @@ jobs:
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 17
+          java-version: "17"
 
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-
           sudo apt-get install -y \
             git zip unzip autoconf automake libtool \
-            pkg-config cmake \
-            build-essential \
-            libffi-dev \
-            libssl-dev \
+            pkg-config cmake build-essential \
+            libffi-dev libssl-dev \
             zlib1g-dev \
-            libncurses5-dev \
-            libncursesw5-dev \
+            libncurses5-dev libncursesw5-dev \
             libtinfo6 \
-            libsqlite3-dev \
-            sqlite3 \
-            bzip2 \
-            libbz2-dev \
+            libsqlite3-dev sqlite3 \
+            bzip2 libbz2-dev \
             liblzma-dev \
             libreadline-dev \
             libgdbm-dev \
@@ -57,6 +55,20 @@ jobs:
             libswscale-dev \
             libavformat-dev \
             libavcodec-dev
+
+      - name: Install Android SDK
+        run: |
+          yes | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --licenses
+
+          ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;29.0.13846066"
+
+      - name: Verify aidl
+        run: |
+          find $ANDROID_SDK_ROOT -name aidl
 
       - name: Install Buildozer
         run: |
