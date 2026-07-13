@@ -56,19 +56,34 @@ jobs:
             libavformat-dev \
             libavcodec-dev
 
-      - name: Install Android SDK
+      - name: Install Android SDK and accept licenses
         run: |
+          # قبول جميع التراخيص
           yes | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --licenses
-
+          
+          # تثبيت الأدوات المطلوبة
           ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager \
             "platform-tools" \
             "platforms;android-35" \
+            "build-tools;34.0.0" \
             "build-tools;35.0.0" \
             "ndk;29.0.13846066"
 
-      - name: Verify aidl
+      - name: Setup Buildozer environment
         run: |
-          find $ANDROID_SDK_ROOT -name aidl
+          # إنشاء الروابط اللازمة
+          mkdir -p /home/runner/.buildozer/android/platform/android-sdk
+          ln -sf ${ANDROID_SDK_ROOT}/build-tools /home/runner/.buildozer/android/platform/android-sdk/build-tools
+          ln -sf ${ANDROID_SDK_ROOT}/platforms /home/runner/.buildozer/android/platform/android-sdk/platforms
+          ln -sf ${ANDROID_SDK_ROOT}/platform-tools /home/runner/.buildozer/android/platform/android-sdk/platform-tools
+          ln -sf ${ANDROID_SDK_ROOT}/ndk /home/runner/.buildozer/android/platform/android-sdk/ndk
+
+      - name: Verify SDK installation
+        run: |
+          echo "Checking build-tools:"
+          ls -la ${ANDROID_SDK_ROOT}/build-tools/
+          echo "Checking aidl:"
+          find ${ANDROID_SDK_ROOT} -name aidl || echo "aidl not found"
 
       - name: Install Buildozer
         run: |
@@ -76,8 +91,20 @@ jobs:
           pip install Cython==0.29.37
           pip install buildozer
 
+      - name: Initialize Buildozer if needed
+        run: |
+          if [ ! -f buildozer.spec ]; then
+            echo "Creating buildozer.spec..."
+            buildozer init
+          else
+            echo "buildozer.spec found"
+          fi
+
       - name: Build APK
         run: |
+          # تعيين متغيرات البيئة للتأكد
+          export ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}
+          export ANDROID_HOME=${ANDROID_HOME}
           buildozer android debug
 
       - name: Upload APK
