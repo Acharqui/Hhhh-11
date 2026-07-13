@@ -9,7 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 60  # زيادة المهلة إلى 60 دقيقة
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -55,16 +55,14 @@ jobs:
 
       - name: Setup Android SDK
         run: |
-          # قبول التراخيص
           yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          
-          # تثبيت الحد الأدنى من الأدوات
           /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager \
             "platform-tools" \
             "platforms;android-30" \
-            "build-tools;30.0.3"
+            "build-tools;30.0.3" \
+            "ndk;23.2.8568313"
 
-      - name: Create SDK links for Buildozer
+      - name: Create SDK links
         run: |
           mkdir -p /home/runner/.buildozer/android/platform/android-sdk
           ln -sf /usr/local/lib/android/sdk/* /home/runner/.buildozer/android/platform/android-sdk/ || true
@@ -82,17 +80,24 @@ jobs:
             buildozer init
           fi
           
-          # إعدادات سريعة
-          sed -i 's/^android.api = .*/android.api = 30/' buildozer.spec
-          sed -i 's/^android.minapi = .*/android.minapi = 21/' buildozer.spec
-          sed -i 's/^# android.sdk_path = .*/android.sdk_path = \/home\/runner\/.buildozer\/android\/platform\/android-sdk/' buildozer.spec
-
-      - name: Build APK with keepalive
-        run: |
-          # منع انتهاء المهلة
-          (while true; do echo "Building... $(date)"; sleep 60; done) &
+          # تحديث الإعدادات
+          sed -i 's/^#.*android.api = .*/android.api = 30/' buildozer.spec
+          sed -i 's/^#.*android.minapi = .*/android.minapi = 21/' buildozer.spec
+          sed -i 's/^#.*android.ndk = .*/android.ndk = 23.2.8568313/' buildozer.spec
+          sed -i 's/^#.*android.sdk_path = .*/android.sdk_path = \/home\/runner\/.buildozer\/android\/platform\/android-sdk/' buildozer.spec
           
+          # إضافة requirements صريحة
+          echo "requirements = python3==3.11.0,kivy==2.3.0,plyer" >> buildozer.spec
+
+      - name: Build APK
+        run: |
           export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
           export ANDROID_HOME=/usr/local/lib/android/sdk
           
           buildozer android debug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: APK
+          path: bin/*.apk
