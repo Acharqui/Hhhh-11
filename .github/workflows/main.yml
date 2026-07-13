@@ -9,11 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-
-    env:
-      # استخدام SDK المثبت مسبقاً في GitHub Actions
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+    timeout-minutes: 60  # زيادة المهلة إلى 60 دقيقة
 
     steps:
       - name: Checkout
@@ -23,7 +19,7 @@ jobs:
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "11"
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -57,35 +53,22 @@ jobs:
             libavformat-dev \
             libavcodec-dev
 
-      - name: Install Android SDK and accept licenses
+      - name: Setup Android SDK
         run: |
-          # استخدام SDK المثبت مسبقاً في GitHub Actions
-          # قبول جميع التراخيص
-          yes | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          # قبول التراخيص
+          yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses || true
           
-          # تثبيت الأدوات المطلوبة
-          ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager \
+          # تثبيت الحد الأدنى من الأدوات
+          /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager \
             "platform-tools" \
-            "platforms;android-34" \
-            "platforms;android-35" \
-            "build-tools;34.0.0"
+            "platforms;android-30" \
+            "build-tools;30.0.3"
 
-      - name: Link SDK for Buildozer
+      - name: Create SDK links for Buildozer
         run: |
-          # إنشاء هيكل المجلدات لـ Buildozer
           mkdir -p /home/runner/.buildozer/android/platform/android-sdk
-          
-          # ربط SDK الفعلي مع المجلد الذي يتوقعه Buildozer
-          ln -sf ${ANDROID_SDK_ROOT}/* /home/runner/.buildozer/android/platform/android-sdk/ || true
-          ln -sf ${ANDROID_SDK_ROOT}/cmdline-tools/latest /home/runner/.buildozer/android/platform/android-sdk/tools
-          
-          # إنشاء مجلد tools/bin إذا لم يكن موجوداً
-          mkdir -p /home/runner/.buildozer/android/platform/android-sdk/tools/bin
-          
-          # إنشاء رابط لـ sdkmanager
-          if [ ! -f /home/runner/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager ]; then
-            ln -sf ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager /home/runner/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager
-          fi
+          ln -sf /usr/local/lib/android/sdk/* /home/runner/.buildozer/android/platform/android-sdk/ || true
+          ln -sf /usr/local/lib/android/sdk/cmdline-tools/latest /home/runner/.buildozer/android/platform/android-sdk/tools
 
       - name: Install Buildozer
         run: |
@@ -99,24 +82,17 @@ jobs:
             buildozer init
           fi
           
-          # تحديث الإعدادات
-          sed -i 's/^android.api = .*/android.api = 34/' buildozer.spec
+          # إعدادات سريعة
+          sed -i 's/^android.api = .*/android.api = 30/' buildozer.spec
           sed -i 's/^android.minapi = .*/android.minapi = 21/' buildozer.spec
-          sed -i 's/^android.ndk = .*/android.ndk = 26.3.11579264/' buildozer.spec
           sed -i 's/^# android.sdk_path = .*/android.sdk_path = \/home\/runner\/.buildozer\/android\/platform\/android-sdk/' buildozer.spec
 
-      - name: Build APK
+      - name: Build APK with keepalive
         run: |
-          # استخدام SDK الفعلي
+          # منع انتهاء المهلة
+          (while true; do echo "Building... $(date)"; sleep 60; done) &
+          
           export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
           export ANDROID_HOME=/usr/local/lib/android/sdk
-          export PATH=${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${PATH}
           
-          # بناء التطبيق
           buildozer android debug
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: APK
-          path: bin/*.apk
