@@ -11,8 +11,11 @@ jobs:
     runs-on: ubuntu-22.04
 
     env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      ANDROID_HOME: /home/runner/.buildozer/android/platform/android-sdk
+      ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
+      ANDROID_NDK_ROOT: /home/runner/.buildozer/android/platform/android-ndk-r28c
+      ANDROID_API: 34
+      ANDROID_MIN_API: 21
 
     steps:
       - name: Checkout
@@ -61,30 +64,25 @@ jobs:
           # قبول جميع التراخيص
           yes | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --licenses || true
           
-          # تثبيت الأدوات المطلوبة - استخدم إصدارات NDK المتاحة
+          # تثبيت الأدوات المطلوبة
           ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager \
             "platform-tools" \
+            "platforms;android-34" \
             "platforms;android-35" \
             "build-tools;34.0.0" \
-            "ndk;26.3.11579264"
+            "build-tools;35.0.0"
 
       - name: Setup Buildozer SDK structure
         run: |
-          # إنشاء هيكل المجلدات الذي يتوقعه Buildozer
+          # إنشاء هيكل المجلدات
           mkdir -p /home/runner/.buildozer/android/platform/android-sdk
           
-          # ربط cmdline-tools إلى المجلد tools
-          ln -sf ${ANDROID_SDK_ROOT}/cmdline-tools /home/runner/.buildozer/android/platform/android-sdk/cmdline-tools
-          ln -sf ${ANDROID_SDK_ROOT}/cmdline-tools/latest /home/runner/.buildozer/android/platform/android-sdk/tools
-          
-          # ربط باقي المجلدات
-          ln -sf ${ANDROID_SDK_ROOT}/build-tools /home/runner/.buildozer/android/platform/android-sdk/build-tools
-          ln -sf ${ANDROID_SDK_ROOT}/platforms /home/runner/.buildozer/android/platform/android-sdk/platforms
-          ln -sf ${ANDROID_SDK_ROOT}/platform-tools /home/runner/.buildozer/android/platform/android-sdk/platform-tools
-          ln -sf ${ANDROID_SDK_ROOT}/ndk /home/runner/.buildozer/android/platform/android-sdk/ndk
-          
-          # إنشاء مجلد tools/bin
-          mkdir -p /home/runner/.buildozer/android/platform/android-sdk/tools/bin
+          # ربط المجلدات
+          ln -sf /usr/local/lib/android/sdk/cmdline-tools /home/runner/.buildozer/android/platform/android-sdk/cmdline-tools
+          ln -sf /usr/local/lib/android/sdk/cmdline-tools/latest /home/runner/.buildozer/android/platform/android-sdk/tools
+          ln -sf /usr/local/lib/android/sdk/build-tools /home/runner/.buildozer/android/platform/android-sdk/build-tools
+          ln -sf /usr/local/lib/android/sdk/platforms /home/runner/.buildozer/android/platform/android-sdk/platforms
+          ln -sf /usr/local/lib/android/sdk/platform-tools /home/runner/.buildozer/android/platform/android-sdk/platform-tools
 
       - name: Install Buildozer
         run: |
@@ -92,14 +90,28 @@ jobs:
           pip install Cython==0.29.37
           pip install buildozer
 
-      - name: Initialize Buildozer if needed
+      - name: Create or update buildozer.spec
         run: |
           if [ ! -f buildozer.spec ]; then
-            echo "Creating buildozer.spec..."
             buildozer init
-          else
-            echo "buildozer.spec found"
           fi
+          
+          # تحديث الإعدادات في buildozer.spec
+          sed -i 's/^android.api = .*/android.api = 34/' buildozer.spec
+          sed -i 's/^android.minapi = .*/android.minapi = 21/' buildozer.spec
+          sed -i 's/^android.ndk = .*/android.ndk = 26.3.11579264/' buildozer.spec
+          sed -i 's/^# android.sdk_path = .*/android.sdk_path = \/home\/runner\/.buildozer\/android\/platform\/android-sdk/' buildozer.spec
+
+      - name: Verify configuration
+        run: |
+          echo "=== buildozer.spec settings ==="
+          grep -E "android.api|android.minapi|android.ndk|android.sdk_path" buildozer.spec || true
+          
+          echo "=== SDK structure ==="
+          ls -la /home/runner/.buildozer/android/platform/android-sdk/
+          
+          echo "=== NDK status ==="
+          ls -la /home/runner/.buildozer/android/platform/ | grep ndk || echo "NDK not downloaded yet"
 
       - name: Build APK
         run: |
@@ -109,7 +121,7 @@ jobs:
           export PATH=${ANDROID_SDK_ROOT}/tools/bin:${PATH}
           
           # بناء التطبيق
-          buildozer android debug
+          buildozer -v android debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
