@@ -59,23 +59,21 @@ jobs:
       - name: Install Android SDK and accept licenses
         run: |
           # قبول جميع التراخيص
-          yes | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --licenses
+          yes | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --licenses || true
           
-          # تثبيت الأدوات المطلوبة
+          # تثبيت الأدوات المطلوبة - استخدم إصدارات NDK المتاحة
           ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;34.0.0" \
-            "build-tools;35.0.0" \
-            "ndk;26.3.11579264" \
-            "ndk;27.3.11772168"
+            "ndk;26.3.11579264"
 
       - name: Setup Buildozer SDK structure
         run: |
           # إنشاء هيكل المجلدات الذي يتوقعه Buildozer
           mkdir -p /home/runner/.buildozer/android/platform/android-sdk
           
-          # ربط cmdline-tools إلى المجلد tools (حل المشكلة الرئيسية)
+          # ربط cmdline-tools إلى المجلد tools
           ln -sf ${ANDROID_SDK_ROOT}/cmdline-tools /home/runner/.buildozer/android/platform/android-sdk/cmdline-tools
           ln -sf ${ANDROID_SDK_ROOT}/cmdline-tools/latest /home/runner/.buildozer/android/platform/android-sdk/tools
           
@@ -85,20 +83,8 @@ jobs:
           ln -sf ${ANDROID_SDK_ROOT}/platform-tools /home/runner/.buildozer/android/platform/android-sdk/platform-tools
           ln -sf ${ANDROID_SDK_ROOT}/ndk /home/runner/.buildozer/android/platform/android-sdk/ndk
           
-          # إنشاء مجلد tools/bin إذا لم يكن موجوداً
+          # إنشاء مجلد tools/bin
           mkdir -p /home/runner/.buildozer/android/platform/android-sdk/tools/bin
-
-      - name: Verify SDK structure
-        run: |
-          echo "=== SDK Structure ==="
-          ls -la /home/runner/.buildozer/android/platform/android-sdk/
-          echo ""
-          echo "=== Checking sdkmanager ==="
-          ls -la /home/runner/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager || echo "Not found, creating symlink..."
-          # إنشاء رابط مباشر إذا لزم الأمر
-          if [ ! -f /home/runner/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager ]; then
-            ln -sf ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager /home/runner/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager
-          fi
 
       - name: Install Buildozer
         run: |
